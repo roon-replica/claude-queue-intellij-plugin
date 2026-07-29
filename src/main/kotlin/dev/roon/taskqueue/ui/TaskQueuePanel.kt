@@ -289,9 +289,13 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
 
 
-    /** 원시 stream-json 대신 사람이 읽는 한 줄로 */
+    /**
+     * stream-json 은 사람이 읽는 한 줄로 바꾸고, 그 외(러너가 남긴 진행 메시지)는 그대로 표시한다.
+     * 전부 LogFormatter 로 넘기면 JSON 이 아닌 줄이 조용히 버려진다.
+     */
     private fun appendLog(line: String) {
-        val text = LogFormatter.format(line) ?: return
+        val isJson = line.trimStart().startsWith("{")
+        val text = if (isJson) LogFormatter.format(line) ?: return else line
         logArea.append(text + "\n")
         logArea.caretPosition = logArea.document.length
     }
