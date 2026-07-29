@@ -64,6 +64,9 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         lineWrap = true
     }
 
+    /** CLI 탐지 결과 — 비동기로 채워진다 */
+    private var cliInfo: String = "claude 확인 중…"
+
     private val queueListener: () -> Unit = { ui { refresh() } }
     private val logListener: (String) -> Unit = { line -> ui { appendLog(line) } }
 
@@ -138,13 +141,24 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         refresh()
     }
 
-    /** CLI 미설치면 큐 추가를 막고 안내한다 */
+    /**
+     * CLI 미설치면 큐 추가를 막고 안내한다.
+     * 프로세스 실행은 EDT 에서 금지 — pooled thread 로 돌리고 결과만 EDT 에서 반영한다.
+     */
     private fun refreshCliStatus() {
-        val exe = cli.findExecutable()
-        if (exe == null) {
-            statusLabel.text = "claude CLI 를 찾을 수 없다 — 설치 후 IDE 재시작"
-            addButton.isEnabled = false
-            promptField.isEnabled = false
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val exe = cli.findExecutable()
+            val version = if (exe != null) cli.version() else null
+            ui {
+                if (exe == null) {
+                    statusLabel.text = "claude CLI 를 찾을 수 없다 — 설치 후 IDE 재시작"
+                    addButton.isEnabled = false
+                    promptField.isEnabled = false
+                } else {
+                    cliInfo = "claude ${version ?: "?"}"
+                    refresh()
+                }
+            }
         }
     }
 
@@ -169,6 +183,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 append(" [${it.finalState}]")
             }
             append("  ·  cwd: ${project.basePath ?: "-"}")
+            append("  ·  $cliInfo")
         }
 
         refreshRefs()

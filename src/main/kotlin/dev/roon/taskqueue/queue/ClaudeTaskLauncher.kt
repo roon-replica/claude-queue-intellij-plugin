@@ -1,5 +1,7 @@
 package dev.roon.taskqueue.queue
 
+import com.intellij.execution.process.OSProcessHandler
+import com.intellij.openapi.application.ApplicationManager
 import dev.roon.taskqueue.cli.ClaudeCli
 import dev.roon.taskqueue.session.SessionPaths
 import dev.roon.taskqueue.session.SessionScanner
@@ -36,32 +38,60 @@ class ClaudeTaskLauncher(
         var errorMessage: String? = null
 
         val watch = watcher.watch(sessionFile, fromOffset, stopOnTerminal = false) { onState(it) }
+        val running = PendingProcess(watch)
 
-        val handler = cli.run(
-            prompt = task.prompt,
-            workDir = workDir,
-            sessionId = sessionId,
-            onEvent = { e ->
-                e.assistantText?.let(onText)
-                if (e.isResult) {
-                    cost = e.totalCostUsd
-                    e.resultText?.let(onText)
-                    if (e.isError) errorMessage = e.resultText?.take(300) ?: "CLI 오류"
-                }
-            },
-            onRawLine = onLine,
-            onFinish = { exitCode ->
+        // 프로세스 시작을 EDT 에서 하지 않는다 — UI 스레드에서 프로세스를 띄우면 플랫폼이 막는다
+        ApplicationManager.getApplication().executeOnPooledThread {
+            if (running.canceled) return@executeOnPooledThread
+            val handler = try {
+                cli.run(
+                    prompt = task.prompt,
+                    workDir = workDir,
+                    sessionId = sessionId,
+                    onEvent = { e ->
+                        e.assistantText?.let(onText)
+                        if (e.isResult) {
+                            cost = e.totalCostUsd
+                            e.resultText?.let(onText)
+                            if (e.isError) errorMessage = e.resultText?.take(300) ?: "CLI 오류"
+                        }
+                    },
+                    onRawLine = onLine,
+                    onFinish = { exitCode ->
+                        watch.cancel()
+                        val finalState = SessionScanner.sessionState(sessionFile, fromOffset)
+                        onDone(TaskResult(exitCode, finalState, cost, errorMessage))
+                    },
+                )
+            } catch (e: Exception) {
                 watch.cancel()
-                val finalState = SessionScanner.sessionState(sessionFile, fromOffset)
-                onDone(TaskResult(exitCode, finalState, cost, errorMessage))
-            },
-        )
-
-        return object : RunningTask {
-            override fun cancel() {
-                watch.cancel()
-                handler.destroyProcess()
+                onDone(TaskResult(-1, SessionState.UNKNOWN, null, e.message ?: "실행 실패"))
+                return@executeOnPooledThread
             }
+            running.attach(handler)
+        }
+
+        return running
+    }
+
+    /** 프로세스가 뜨기 전에 취소될 수 있으므로 핸들러를 나중에 붙인다 */
+    private class PendingProcess(private val watch: SessionWatcher.Handle) : RunningTask {
+        @Volatile
+        var canceled = false
+            private set
+
+        @Volatile
+        private var handler: OSProcessHandler? = null
+
+        fun attach(h: OSProcessHandler) {
+            handler = h
+            if (canceled) h.destroyProcess()
+        }
+
+        override fun cancel() {
+            canceled = true
+            watch.cancel()
+            handler?.destroyProcess()
         }
     }
 }

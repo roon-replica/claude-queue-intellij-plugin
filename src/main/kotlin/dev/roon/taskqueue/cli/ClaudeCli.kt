@@ -6,6 +6,7 @@ import com.intellij.execution.process.OSProcessHandler
 import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.util.ExecUtil
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.thisLogger
@@ -27,8 +28,15 @@ class ClaudeCli {
             .firstOrNull { it.isFile && it.canExecute() }
     }
 
-    /** `claude --version` 결과. 탐지/인증 안내 UI 에서 사용. */
+    /**
+     * `claude --version` 결과. 탐지/인증 안내 UI 에서 사용.
+     * **EDT 에서 호출 금지** — 동기 프로세스 실행이라 플랫폼이 예외를 던진다.
+     */
     fun version(): String? {
+        if (ApplicationManager.getApplication()?.isDispatchThread == true) {
+            thisLogger().warn("version() 을 EDT 에서 호출했다 — 백그라운드로 옮겨야 한다")
+            return null
+        }
         val exe = findExecutable() ?: return null
         return try {
             val cmd = GeneralCommandLine(exe.absolutePath, "--version")
