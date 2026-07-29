@@ -15,7 +15,7 @@ object LogFormatter {
 
         if (e.type == "system" && e.subtype == "init") {
             val model = e.raw.get("model")?.takeIf { !it.isJsonNull }?.asString ?: "?"
-            return "▸ 세션 시작  ($model)"
+            return "▸ session started  ($model)"
         }
 
         if (e.type == "rate_limit_event") {
@@ -25,7 +25,7 @@ object LogFormatter {
         if (e.isResult) {
             val secs = e.durationMs?.let { "%.1fs".format(it / 1000.0) } ?: "-"
             val cost = e.totalCostUsd?.let { "$%.3f".format(it) } ?: "-"
-            return if (e.isError) "✘ 실패  $secs  $cost" else "✔ 완료  $secs  $cost"
+            return if (e.isError) "✘ failed  $secs  $cost" else "✔ done  $secs  $cost"
         }
 
         if (e.type == "assistant") {
@@ -39,7 +39,7 @@ object LogFormatter {
 
         if (e.type == "user") {
             // tool_result 는 양이 많아 요약만
-            return "· 도구 결과"
+            return "· tool result"
         }
 
         return null

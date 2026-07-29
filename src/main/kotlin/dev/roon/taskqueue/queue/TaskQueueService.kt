@@ -149,6 +149,20 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         maybeStartNext()
     }
 
+    /**
+     * 프롬프트 수정. **TODO 항목만** — 대기줄에 올라간 뒤엔 곧 전송되므로,
+     * 고친 내용과 실제로 claude 가 받은 내용이 어긋날 수 있다.
+     */
+    fun updatePrompt(id: String, prompt: String): Boolean {
+        val task = find(id) ?: return false
+        if (task.status != TaskStatus.TODO) return false
+        val trimmed = prompt.trim()
+        if (trimmed.isEmpty() || trimmed == task.prompt) return false
+        task.prompt = trimmed
+        notifyChanged()
+        return true
+    }
+
     /** 대기 중 항목 제거. 실행 중이면 취소 후 제거 */
     fun remove(id: String) {
         if (runningId == id) cancelRunning()
@@ -202,7 +216,7 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         running?.cancel()
         running = null
         runningId = null
-        finish(task, TaskStatus.CANCELED, exitCode = null, errorMessage = "사용자 취소")
+        finish(task, TaskStatus.CANCELED, exitCode = null, errorMessage = "Canceled by user")
     }
 
     /** 큐 진행 시작 (autoAdvance 를 껐다 켠 뒤 이어서 돌릴 때) */
@@ -261,7 +275,7 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         runningId = null
         task.status = TaskStatus.TODO
         task.finishedAt = clock()
-        task.errorMessage = "사용자 인터럽트로 중단"
+        task.errorMessage = "Interrupted by user"
         autoAdvance = false
         notifyChanged()
     }

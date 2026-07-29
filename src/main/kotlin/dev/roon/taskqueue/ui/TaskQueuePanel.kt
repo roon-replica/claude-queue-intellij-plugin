@@ -11,6 +11,7 @@ import com.intellij.ide.DataManager
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.components.JBLabel
@@ -44,14 +45,14 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private val queue = TaskQueueService.getInstance()
 
     private val promptField = JBTextField().apply {
-        emptyText.text = "작업 내용 입력 후 Enter — todo 로 추가된다"
+        emptyText.text = "Type a task and press Enter — added to TODO"
     }
 
 
 
-    private val todoColumn = QueueColumn("TODO", "여기에 작업을 적어둔다")
-    private val activeColumn = QueueColumn("진행", "▶ 로 올리면 여기서 순서대로 실행")
-    private val doneColumn = QueueColumn("완료", "끝난 작업")
+    private val todoColumn = QueueColumn("TODO", "Jot down tasks here")
+    private val activeColumn = QueueColumn("IN PROGRESS", "Runs in order once promoted")
+    private val doneColumn = QueueColumn("DONE", "Finished tasks")
     private val columns = listOf(todoColumn, activeColumn, doneColumn)
 
     private val statusLabel = JBLabel().apply {
@@ -62,7 +63,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     /** 상태줄에 띄울 마지막 진행 메시지 — 전체는 툴바 '로그' 로 본다 */
     private var lastLog = ""
 
-    private var cliInfo = "claude 확인 중…"
+    private var cliInfo = "checking claude…"
 
     private val queueListener: () -> Unit = { ui { refresh() } }
     private val logListener: (String) -> Unit = { line -> ui { appendLog(line) } }
@@ -86,39 +87,23 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private fun buildToolbar(): JPanel {
         val group = DefaultActionGroup().apply {
-            add(action("실행", "선택한 todo 를 진행줄로 올린다", AllIcons.Actions.Execute,
-                { selected()?.let { !it.status.isActive } == true }) {
-                selected()?.let { task -> chooseTerminal { tab -> queue.promote(task.id, tab) } }
-            })
-            add(action("todo 전부 실행", "todo 전부를 진행줄로", AllIcons.Actions.RunAll,
+            add(action("Run all TODO", "Promote every TODO task", AllIcons.Actions.RunAll,
                 { queue.todos().isNotEmpty() }) {
                 chooseTerminal { tab -> queue.runAllTodos(tab) }
             })
             addSeparator()
-            add(action("터미널 보기", "이 작업이 도는 claude 탭으로 이동", AllIcons.Actions.MoveTo2,
-                { selected()?.terminalTab?.isNotEmpty() == true }) {
-                selected()?.let { focusTerminal(it) }
-            })
-            add(action("실행 중단","실행 중 작업 취소", AllIcons.Actions.Suspend,
+            add(action("Stop", "Cancel the running task", AllIcons.Actions.Suspend,
                 { queue.runningTask() != null }) {
                 queue.cancelRunning()
             })
-            add(action("재시도", "실패·취소 항목 다시 실행", AllIcons.Actions.Restart,
+            add(action("Retry", "Run a failed or canceled task again", AllIcons.Actions.Restart,
                 { selected()?.status?.isFinished == true }) {
                 selected()?.let { queue.retry(it.id) }
             })
             addSeparator()
             add(PauseResumeAction())
             addSeparator()
-            add(action("완료 정리", "완료·실패 항목 제거", AllIcons.Actions.GC,
-                { queue.tasks.any { it.status.isFinished } }) {
-                queue.clearFinished()
-            })
-            add(action("삭제", "선택 항목 제거", AllIcons.General.Remove, { selected() != null }) {
-                selected()?.let { queue.remove(it.id) }
-            })
-            addSeparator()
-            add(action("로그", "플러그인 진행 로그 (claude 출력은 터미널 탭에 있다)",
+            add(action("Log", "Plugin activity log (claude output lives in the terminal tab)",
                 AllIcons.Debugger.Console, { true }) { showLog() })
         }
 
@@ -151,18 +136,33 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         columns.forEach { column ->
             column.list.addListSelectionListener { e ->
                 if (e.valueIsAdjusting) return@addListSelectionListener
-                if (column.selected != null) {
-                    columns.filter { it !== column }.forEach { it.clearSelection() }
+                val task = column.selected ?: return@addListSelectionListener
+                columns.filter { it !== column }.forEach { it.clearSelection() }
+                // 실행 중 항목을 고르면 그 터미널 탭을 앞으로 — 포커스는 뺏지 않는다
+                if (task.status == TaskStatus.RUNNING && task.terminalTab.isNotEmpty()) {
+                    focusTerminal(task, moveFocus = false)
                 }
             }
-            // 더블클릭 = 컬럼 간 이동 (드래그앤드롭과 같은 동작, 키보드/빠른 조작용)
             column.list.addMouseListener(object : MouseAdapter() {
                 override fun mouseClicked(e: MouseEvent) {
+                    // 카드 오른쪽 버튼 영역 — 선택·더블클릭보다 먼저 처리한다
+                    if (e.clickCount == 1) {
+                        val hit = cardActionAt(column, e) ?: return
+                        val (what, task) = hit
+                        when (what) {
+                            CardAction.DELETE -> queue.remove(task.id)
+                            CardAction.RUN -> chooseTerminal { tab -> queue.promote(task.id, tab) }
+                            CardAction.EDIT -> editPrompt(task)
+                        }
+                        return
+                    }
                     if (e.clickCount != 2) return
                     val task = column.selected ?: return
                     when (task.status) {
-                        TaskStatus.TODO -> chooseTerminal { tab -> queue.promote(task.id, tab) }
-                        TaskStatus.QUEUED -> queue.demote(task.id)
+                        // 실행으로 올리는 건 드래그가 하니, 더블클릭은 수정에 쓴다
+                        TaskStatus.TODO -> editPrompt(task)
+                        // 대기줄에 올라간 뒤엔 곧 실행되므로 고치지 않는다 (TODO 로 내려서 고쳐야 한다)
+                        TaskStatus.QUEUED -> Unit
                         // 실행 중이면 그 claude 터미널로 보내준다 — 개입하려면 그게 필요하다
                         TaskStatus.RUNNING -> focusTerminal(task)
                         else -> Unit
@@ -172,6 +172,36 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
 
         TaskDragAndDrop.install(columns, queue::reorderGroup, ::dropTo, fixed = setOf(doneColumn))
+
+        // 완료 정리는 완료 컬럼에만 해당되는 동작이라 그 헤더에 둔다
+        doneColumn.setHeaderAction(AllIcons.Actions.GC, "Clear finished and failed tasks") { queue.clearFinished() }
+    }
+
+    /** 카드 오른쪽 버튼 영역 클릭 결과 */
+    private enum class CardAction { EDIT, RUN, DELETE }
+
+    /**
+     * 클릭 지점이 카드의 버튼 영역인지 판정한다.
+     * 리스트 렌더러는 실제 버튼이 클릭을 못 받으므로 좌표로 본다.
+     * 오른쪽부터 ✕ · ▶ · ✎ 순이고, ▶/✎ 는 todo 에만 있다(렌더러와 순서를 맞춰야 한다).
+     */
+    private fun cardActionAt(column: QueueColumn, e: MouseEvent): Pair<CardAction, TaskEntry>? {
+        val index = column.list.locationToIndex(e.point).takeIf { it >= 0 } ?: return null
+        val bounds = column.list.getCellBounds(index, index) ?: return null
+        if (!bounds.contains(e.point)) return null
+
+        val task = column.list.model.getElementAt(index)
+        val width = JBUI.scale(TaskCardRenderer.ACTION_WIDTH)
+        val right = bounds.x + bounds.width
+        val isTodo = task.status == TaskStatus.TODO
+
+        return when {
+            e.x >= right - width -> CardAction.DELETE to task
+            !isTodo -> null
+            e.x >= right - 2 * width -> CardAction.RUN to task
+            e.x >= right - 3 * width -> CardAction.EDIT to task
+            else -> null
+        }
     }
 
     /** 다른 컬럼에 떨어뜨렸을 때의 상태 이동 */
@@ -195,9 +225,21 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
 
-    private fun focusTerminal(task: TaskEntry) {
-        if (!TerminalTabFocuser.focus(project, task.terminalTab)) {
-            appendLog("· 터미널 탭을 찾을 수 없다: ${task.terminalTab.ifEmpty { "(없음)" }}")
+    /**
+     * TODO 항목의 프롬프트를 고친다.
+     * 한 줄 입력창이라 엔터가 곧 확인이다 — 전송할 때도 한 줄로 합쳐지므로 실제 동작과 맞는다.
+     */
+    private fun editPrompt(task: TaskEntry) {
+        val edited = Messages.showInputDialog(
+            project, "Prompt", "Edit Task", null, task.prompt, null,
+        ) ?: return
+        queue.updatePrompt(task.id, edited)
+    }
+
+    /** @param moveFocus 더블클릭·버튼은 포커스까지, 단순 선택은 탭만 앞으로 */
+    private fun focusTerminal(task: TaskEntry, moveFocus: Boolean = true) {
+        if (!TerminalTabFocuser.focus(project, task.terminalTab, moveFocus)) {
+            appendLog("· terminal tab not found: ${task.terminalTab.ifEmpty { "(none)" }}")
         }
     }
 
@@ -218,7 +260,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val items = listOf(NEW_TERMINAL) + tabs.map { it.display }
         JBPopupFactory.getInstance()
             .createPopupChooserBuilder(items)
-            .setTitle("실행할 터미널")
+            .setTitle("Run in terminal")
             .setMovable(false)
             .setResizable(false)
             .setItemChosenCallback { chosen ->
@@ -242,7 +284,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             val version = if (exe != null) cli.version() else null
             ui {
                 if (exe == null) {
-                    cliInfo = "claude CLI 없음 — 설치 후 IDE 재시작"
+                    cliInfo = "claude CLI not found — install it and restart the IDE"
                     promptField.isEnabled = false
                 } else {
                     cliInfo = "claude ${version ?: "?"}"
@@ -257,10 +299,11 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         todoColumn.setTasks(all.filter { it.status == TaskStatus.TODO })
         activeColumn.setTasks(all.filter { it.status.isActive })
         doneColumn.setTasks(all.filter { it.status.isFinished })
+        doneColumn.setHeaderActionEnabled(all.any { it.status.isFinished })
 
         statusLabel.text = buildString {
-            append(if (queue.autoAdvance) "자동 진행 ON" else "일시정지")
-            queue.runningTask()?.let { append("  ·  실행: ${it.shortLabel()}") }
+            append(if (queue.autoAdvance) "Auto-advance ON" else "Paused")
+            queue.runningTask()?.let { append("  ·  running: ${it.shortLabel()}") }
             append("  ·  ").append(project.basePath?.let(::File)?.name ?: "-")
             append("  ·  ").append(cliInfo)
             if (lastLog.isNotEmpty()) append("  ·  ").append(lastLog.take(80))
@@ -284,14 +327,14 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val lines = queue.recentLog().mapNotNull { line ->
             if (line.trimStart().startsWith("{")) LogFormatter.format(line) else line
         }
-        val area = JBTextArea(lines.joinToString("\n").ifEmpty { "아직 실행 로그가 없다" }).apply {
+        val area = JBTextArea(lines.joinToString("\n").ifEmpty { "No activity yet" }).apply {
             isEditable = false
             font = JBFont.small()
             caretPosition = document.length
         }
         JBPopupFactory.getInstance()
             .createComponentPopupBuilder(JBScrollPane(area), area)
-            .setTitle("실행 로그")
+            .setTitle("Activity Log")
             .setResizable(true)
             .setMovable(true)
             .setRequestFocus(true)
@@ -303,7 +346,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun ui(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)
 
     private companion object {
-        const val NEW_TERMINAL = "새 터미널"
+        const val NEW_TERMINAL = "New terminal"
     }
 
     /** 조건부 활성 액션을 짧게 만드는 헬퍼 */
@@ -331,7 +374,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         override fun update(e: AnActionEvent) {
             val paused = !queue.autoAdvance
             e.presentation.icon = if (paused) AllIcons.Actions.Resume else AllIcons.Actions.Pause
-            e.presentation.text = if (paused) "자동 진행 재개" else "자동 진행 일시정지"
+            e.presentation.text = if (paused) "Resume auto-advance" else "Pause auto-advance"
         }
 
         override fun actionPerformed(e: AnActionEvent) = togglePause()

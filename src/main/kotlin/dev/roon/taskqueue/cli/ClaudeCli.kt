@@ -34,7 +34,7 @@ class ClaudeCli {
      */
     fun version(): String? {
         if (ApplicationManager.getApplication()?.isDispatchThread == true) {
-            thisLogger().warn("version() 을 EDT 에서 호출했다 — 백그라운드로 옮겨야 한다")
+            thisLogger().warn("version() called on EDT — must run on a background thread")
             return null
         }
         val exe = findExecutable() ?: return null
@@ -42,7 +42,7 @@ class ClaudeCli {
             val cmd = GeneralCommandLine(exe.absolutePath, "--version")
             ExecUtil.execAndGetOutput(cmd, VERSION_TIMEOUT_MS).stdout.trim().ifEmpty { null }
         } catch (e: Exception) {
-            thisLogger().warn("claude --version 실패", e)
+            thisLogger().warn("claude --version failed", e)
             null
         }
     }
@@ -64,7 +64,7 @@ class ClaudeCli {
         onRawLine: (String) -> Unit = {},
         onFinish: (exitCode: Int) -> Unit = {},
     ): OSProcessHandler {
-        val exe = findExecutable() ?: error("claude CLI 를 찾을 수 없다")
+        val exe = findExecutable() ?: error("claude CLI not found")
 
         val cmd = GeneralCommandLine(exe.absolutePath).apply {
             addParameters("-p", prompt)

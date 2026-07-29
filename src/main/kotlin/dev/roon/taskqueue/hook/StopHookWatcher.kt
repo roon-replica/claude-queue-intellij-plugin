@@ -104,7 +104,7 @@ class StopHookWatcher : Disposable {
             waiters.remove(signal.sessionId)
             file.delete()
             runCatching { waiter.onStop(signal) }
-                .onFailure { thisLogger().warn("Stop 처리 실패", it) }
+                .onFailure { thisLogger().warn("Stop handler failed", it) }
         }
         stopPollingIfIdle()
     }
@@ -125,7 +125,7 @@ class StopHookWatcher : Disposable {
             cwd = root.get("cwd")?.takeIf { it.isJsonPrimitive }?.asString,
         )
     } catch (e: Exception) {
-        thisLogger().warn("Stop 훅 파일 파싱 실패: ${file.name}", e)
+        thisLogger().warn("Failed to parse Stop hook file: ${file.name}", e)
         null
     }
 

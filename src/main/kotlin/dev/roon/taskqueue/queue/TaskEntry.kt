@@ -32,6 +32,9 @@ enum class TaskStatus {
 
     /** 실행 대기줄에 있거나 도는 중 */
     val isActive: Boolean get() = this == QUEUED || this == RUNNING
+
+    /** 아직 실행 전이라 순서가 의미 있는 상태 */
+    val isOrdered: Boolean get() = this == TODO || this == QUEUED
 }
 
 /**

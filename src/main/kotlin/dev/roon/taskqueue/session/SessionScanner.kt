@@ -77,7 +77,7 @@ object SessionScanner {
                 .firstOrNull { it.str("type") == "tool_use" && it.str("name") in WAIT_TOOLS }
                 ?: return ""
 
-            if (toolUse.str("name") == "ExitPlanMode") return "계획을 검토해줘"
+            if (toolUse.str("name") == "ExitPlanMode") return "Review the plan"
 
             val questions = toolUse.obj("input")?.arr("questions") ?: return ""
             return questions.mapNotNull { it.asJsonObjectOrNull()?.str("question")?.trim() }

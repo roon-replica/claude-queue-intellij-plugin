@@ -16,7 +16,7 @@ class LogFormatterTest {
     @Test
     fun `init 은 모델을 보여준다`() {
         val out = LogFormatter.format("""{"type":"system","subtype":"init","model":"claude-opus-5"}""")
-        assertEquals("▸ 세션 시작  (claude-opus-5)", out)
+        assertEquals("▸ session started  (claude-opus-5)", out)
     }
 
     @Test
@@ -40,13 +40,13 @@ class LogFormatterTest {
     @Test
     fun `결과는 시간과 비용`() {
         val line = """{"type":"result","is_error":false,"duration_ms":3542,"total_cost_usd":0.116819}"""
-        assertEquals("✔ 완료  3.5s  $0.117", LogFormatter.format(line))
+        assertEquals("✔ done  3.5s  $0.117", LogFormatter.format(line))
     }
 
     @Test
     fun `오류 결과는 실패로 표시`() {
         val line = """{"type":"result","is_error":true,"duration_ms":1000,"total_cost_usd":0.01}"""
-        assertTrue(LogFormatter.format(line)!!.startsWith("✘ 실패"))
+        assertTrue(LogFormatter.format(line)!!.startsWith("✘ failed"))
     }
 
     @Test

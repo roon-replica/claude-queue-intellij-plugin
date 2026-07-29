@@ -3,6 +3,18 @@
     <!-- 터미널 실행 모드 — IDEA 번들 플러그인 -->
     <depends>org.jetbrains.plugins.terminal</depends>
 
+    <!-- 마켓플레이스에 그대로 노출되는 설명 — HTML 만 허용된다 -->
+    <description><![CDATA[
+        Queue up Claude Code tasks and run them one after another in your IDE terminal.
+        <ul>
+          <li><b>TODO / In progress / Done</b> board — drag cards to reorder or to start them.</li>
+          <li>Tasks run in a <b>real Claude Code terminal</b>, so you can watch and step in at any time.</li>
+          <li>Pick which terminal a task runs in — a new tab, one the plugin opened, or a shell you opened yourself.</li>
+          <li>Completion is detected automatically and the next task starts on its own.</li>
+        </ul>
+        Requires the <code>claude</code> CLI on your PATH.
+    ]]></description>
+
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Task Queue"
                     anchor="bottom"
@@ -18,8 +30,8 @@
     <actions>
         <action id="TaskQueue.EnqueueSelection"
                 class="dev.roon.taskqueue.actions.EnqueueSelectionAction"
-                text="작업 큐에 추가"
-                description="선택 영역 또는 파일을 자동작업으로 큐잉">
+                text="Add to Task Queue"
+                description="Queue the selection or file as an automated task">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
             <keyboard-shortcut keymap="$default" first-keystroke="control alt shift Q"/>

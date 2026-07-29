@@ -31,9 +31,9 @@ object TerminalTabs {
             get() {
                 val session = registered?.sessionId
                 return when {
-                    session != null -> "$title  (이어서 대화 — 세션 ${session.take(8)})"
-                    idleShell -> "$title  (셸 — 여기서 claude 를 띄운다)"
-                    else -> "$title  (claude 실행 중 — 이어서 대화)"
+                    session != null -> "$title  (continue — session ${session.take(8)})"
+                    idleShell -> "$title  (shell — claude will be started here)"
+                    else -> "$title  (claude running — continue here)"
                 }
             }
     }
@@ -43,7 +43,7 @@ object TerminalTabs {
         return contents(project).mapNotNull { content ->
             val widget = runCatching { TerminalToolWindowManager.getWidgetByContent(content) }.getOrNull()
                 ?: return@mapNotNull null
-            Choice(widget, content.displayName?.takeIf { it.isNotBlank() } ?: "터미널", registry.findByWidget(widget))
+            Choice(widget, content.displayName?.takeIf { it.isNotBlank() } ?: "Terminal", registry.findByWidget(widget))
         }
     }
 
@@ -51,7 +51,7 @@ object TerminalTabs {
     fun pin(choice: Choice): String {
         choice.registered?.let { return it.label }
         val registry = TerminalSessionRegistry.getInstance()
-        val label = registry.uniqueLabel(choice.title.ifBlank { "터미널" })
+        val label = registry.uniqueLabel(choice.title.ifBlank { "Terminal" })
         registry.register(label, choice.widget, sessionId = null, ours = false)
         return label
     }

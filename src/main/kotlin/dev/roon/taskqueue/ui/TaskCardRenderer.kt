@@ -1,5 +1,6 @@
 package dev.roon.taskqueue.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
@@ -8,6 +9,7 @@ import dev.roon.taskqueue.queue.TaskStatus
 import dev.roon.taskqueue.session.SessionState
 import java.awt.BorderLayout
 import java.awt.Component
+import java.awt.FlowLayout
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
@@ -19,7 +21,9 @@ import javax.swing.BorderFactory
 import javax.swing.JLabel
 import javax.swing.JList
 import javax.swing.JPanel
+import javax.swing.Icon
 import javax.swing.ListCellRenderer
+import javax.swing.SwingConstants
 
 /** 카드 = 상태점 + 프롬프트 1줄 + 메타 1줄 */
 class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRenderer<TaskEntry> {
@@ -30,6 +34,17 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
         font = JBFont.small()
     }
 
+    /** 카드에서 바로 누르는 버튼들. 실제 클릭 판정은 리스트가 좌표로 한다 */
+    private val edit = iconButton(AllIcons.Actions.Edit, "Edit this task")
+    private val run = iconButton(AllIcons.Actions.Execute, "Run this task")
+    private val close = iconButton(AllIcons.Actions.Close, "Delete this task")
+
+    private fun iconButton(icon: Icon, tooltip: String) = JLabel(icon).apply {
+        preferredSize = JBUI.size(ACTION_WIDTH, 16)
+        horizontalAlignment = SwingConstants.CENTER
+        toolTipText = tooltip
+    }
+
     init {
         border = JBUI.Borders.empty(4, 6)
         val texts = JPanel(BorderLayout()).apply {
@@ -37,8 +52,16 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
             add(title, BorderLayout.NORTH)
             add(meta, BorderLayout.SOUTH)
         }
+        // FlowLayout 은 숨긴 컴포넌트를 건너뛴다 — todo 가 아니면 ✕ 만 오른쪽에 남는다
+        val actions = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+            isOpaque = false
+            add(edit)
+            add(run)
+            add(close)
+        }
         add(dot, BorderLayout.WEST)
         add(texts, BorderLayout.CENTER)
+        add(actions, BorderLayout.EAST)
     }
 
     override fun getListCellRendererComponent(
@@ -56,8 +79,14 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
 
         dot.color = colorOf(task)
         dot.pulsing = task.status == TaskStatus.RUNNING
+        // 실행·수정은 아직 안 올린 항목에만
+        val isTodo = task.status == TaskStatus.TODO
+        run.isVisible = isTodo
+        edit.isVisible = isTodo
 
-        title.text = task.shortLabel().ifEmpty { "(빈 프롬프트)" }
+        val label = task.shortLabel().ifEmpty { "(empty prompt)" }
+        // 실행 순서가 의미 있는 항목에만 번호 — 돌고 있거나 끝난 건 순서가 무의미하다
+        title.text = if (task.status.isOrdered) "${index + 1}. $label" else label
         title.foreground = fg
 
         meta.text = metaOf(task)
@@ -81,9 +110,9 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
         when (task.status) {
             TaskStatus.RUNNING -> {
                 parts += when (task.finalState) {
-                    SessionState.WAITING -> "응답 대기 중"
-                    SessionState.WORKING -> "진행 중"
-                    else -> "시작 중"
+                    SessionState.WAITING -> "waiting for input"
+                    SessionState.WORKING -> "working"
+                    else -> "starting"
                 }
             }
 
@@ -105,7 +134,7 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
         if (task.status != TaskStatus.TODO && task.terminalTab.isNotEmpty()) {
             parts += "⌗ ${task.terminalTab}"
         }
-        if (task.attempts > 1) parts += "시도 ${task.attempts}회"
+        if (task.attempts > 1) parts += "attempt ${task.attempts}"
         return parts.joinToString("  ·  ")
     }
 
@@ -120,7 +149,7 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
         val s = task.startedAt ?: return null
         val f = task.finishedAt ?: return null
         val sec = (f - s) / 1000.0
-        return if (sec < 60) "%.1fs".format(sec) else "%d분 %ds".format((sec / 60).toInt(), (sec % 60).toInt())
+        return if (sec < 60) "%.1fs".format(sec) else "%dm %ds".format((sec / 60).toInt(), (sec % 60).toInt())
     }
 
     private fun colorOf(task: TaskEntry): JBColor = when (task.status) {
@@ -169,6 +198,9 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
         private val RUNNING = JBColor(0x1F8B4C, 0x4CB782)
         private val DONE = JBColor(0x6E7781, 0x8B949E)
         private val FAILED = JBColor(0xD1383D, 0xE5534B)
+
+        /** 카드 오른쪽 버튼 하나의 폭 — 클릭 판정도 이 값을 쓴다 */
+        const val ACTION_WIDTH = 22
 
         private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
         private val DATE_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("M/d HH:mm")

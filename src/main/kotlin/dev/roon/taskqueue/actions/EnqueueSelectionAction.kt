@@ -32,8 +32,8 @@ class EnqueueSelectionAction : AnAction() {
 
         val instruction = Messages.showInputDialog(
             project,
-            "$context\n\n무엇을 할까?",
-            "작업 큐에 추가",
+            "$context\n\nWhat should I do?",
+            "Add to Task Queue",
             null,
             "",
             null,
@@ -53,16 +53,16 @@ class EnqueueSelectionAction : AnAction() {
             file.path.removePrefix(base.trimEnd('/') + "/")
         } ?: file.path
 
-        val selection = editor?.selectionModel?.takeIf { it.hasSelection() } ?: return "대상: $path"
+        val selection = editor?.selectionModel?.takeIf { it.hasSelection() } ?: return "Target: $path"
         val doc = editor.document
         val startLine = doc.getLineNumber(selection.selectionStart) + 1
         val endLine = doc.getLineNumber(selection.selectionEnd) + 1
         val range = if (startLine == endLine) "$startLine" else "$startLine-$endLine"
 
         val snippet = selection.selectedText.orEmpty().let {
-            if (it.length > SNIPPET_MAX) it.take(SNIPPET_MAX) + "\n…(생략)" else it
+            if (it.length > SNIPPET_MAX) it.take(SNIPPET_MAX) + "\n…(truncated)" else it
         }
-        return "대상: $path:$range\n```\n$snippet\n```"
+        return "Target: $path:$range\n```\n$snippet\n```"
     }
 
     companion object {

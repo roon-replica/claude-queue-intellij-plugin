@@ -56,7 +56,7 @@ class ClaudeTaskLauncher(
                     onEvent = { e ->
                         if (e.isResult) {
                             cost = e.totalCostUsd
-                            if (e.isError) errorMessage = e.resultText?.take(300) ?: "CLI 오류"
+                            if (e.isError) errorMessage = e.resultText?.take(300) ?: "CLI error"
                         }
                     },
                     onRawLine = onLine,
@@ -68,7 +68,7 @@ class ClaudeTaskLauncher(
                 )
             } catch (e: Exception) {
                 watch.cancel()
-                onDone(TaskResult(-1, SessionState.UNKNOWN, null, e.message ?: "실행 실패"))
+                onDone(TaskResult(-1, SessionState.UNKNOWN, null, e.message ?: "Launch failed"))
                 return@executeOnPooledThread
             }
             running.attach(handler)

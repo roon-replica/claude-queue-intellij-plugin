@@ -11,6 +11,7 @@ import dev.roon.taskqueue.session.SessionPaths
 import dev.roon.taskqueue.session.SessionState
 import dev.roon.taskqueue.session.SessionWatcher
 import dev.roon.taskqueue.terminal.TerminalSessionRegistry
+import dev.roon.taskqueue.terminal.TerminalTabFocuser
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 import java.io.File
@@ -40,9 +41,9 @@ class TerminalTaskLauncher(
         onDone: (TaskResult) -> Unit,
     ): RunningTask {
         val project = findProject(task.cwd)
-            ?: return fail(onDone, "열린 프로젝트를 찾을 수 없다: ${task.cwd}")
+            ?: return fail(onDone, "No open project for ${task.cwd}")
         val exe = cliProvider().findExecutable()
-            ?: return fail(onDone, "claude CLI 를 찾을 수 없다")
+            ?: return fail(onDone, "claude CLI not found")
 
         val hooks = hookProvider()
         val running = TerminalRun()
@@ -58,38 +59,99 @@ class TerminalTaskLauncher(
                     onDone(
                         TaskResult(
                             -1, SessionState.UNKNOWN, null,
-                            "그 터미널 탭이 사라졌다 — 실행할 터미널을 다시 골라야 한다",
+                            "That terminal tab is gone — pick a terminal again",
                         )
                     )
                     return@invokeLater
                 }
 
-                val sentAt = System.currentTimeMillis()
+                if (known == null) {
+                    runOnNewTab(
+                        project, exe, task, registry, hooks,
+                        System.currentTimeMillis(), running, onLine, onState, onDone,
+                    )
+                    return@invokeLater
+                }
 
-                when {
-                    // 셸만 떠 있는 탭 — 프롬프트를 타이핑하면 셸에 그대로 들어간다.
-                    // 대신 그 탭에서 우리가 claude 를 띄운다 → 훅을 심을 수 있다
-                    known != null && !known.ours && known.hasRunningCommand() == false ->
-                        startClaudeInTab(known, exe, task, registry, hooks, sentAt, running, onLine, onState, onDone)
+                // 셸이 아직 뜨는 중일 수 있다 — 준비 전에 명령을 넣으면 유실된다
+                awaitTabReady(project, known, running, onLine, onDone) { tab ->
+                    val sentAt = System.currentTimeMillis()
+                    when {
+                        // 셸만 떠 있는 탭 — 프롬프트를 타이핑하면 셸에 그대로 들어간다.
+                        // 대신 그 탭에서 우리가 claude 를 띄운다 → 훅을 심을 수 있다
+                        !tab.ours && tab.hasRunningCommand() == false ->
+                            startClaudeInTab(tab, exe, task, registry, hooks, sentAt, running, onLine, onState, onDone)
 
-                    // claude 가 이미 도는 외부 탭 — 훅이 없으므로 jsonl 로 판정한다
-                    known != null && !known.ours ->
-                        runOnExternalTab(known, task, sentAt, running, onLine, onState, onDone)
+                        // claude 가 이미 도는 외부 탭 — 훅이 없으므로 jsonl 로 판정한다
+                        !tab.ours ->
+                            runOnExternalTab(tab, task, sentAt, running, onLine, onState, onDone)
 
-                    // 우리 탭 재사용 — 심어둔 훅이 이 턴의 완료를 알린다
-                    known != null ->
-                        runOnOurTab(known, task, hooks, sentAt, running, onLine, onState, onDone)
-
-                    else ->
-                        runOnNewTab(project, exe, task, registry, hooks, sentAt, running, onLine, onState, onDone)
+                        // 우리 탭 재사용 — 심어둔 훅이 이 턴의 완료를 알린다
+                        else ->
+                            runOnOurTab(tab, task, hooks, sentAt, running, onLine, onState, onDone)
+                    }
                 }
             } catch (e: Exception) {
                 running.cancel()
-                onDone(TaskResult(-1, SessionState.UNKNOWN, null, "터미널 실행 실패: ${e.message}"))
+                onDone(TaskResult(-1, SessionState.UNKNOWN, null, "Terminal launch failed: ${e.message}"))
             }
         }
 
         return running
+    }
+
+    /**
+     * 탭의 tty 가 붙고 셸 초기화가 가라앉을 때까지 기다린 뒤 [proceed] 를 EDT 에서 실행한다.
+     *
+     * 방금 연 탭은 tty 가 아직 없다. 그 상태에서 명령을 넣으면 유실되고,
+     * `hasRunningCommands()` 도 셸이 rc 파일을 읽는 중이면 엉뚱하게 답한다.
+     * 셸이 뭘 출력하든(rc 경고 등) 상관없이 준비만 기다린다.
+     *
+     * **먼저 탭을 화면에 띄운다.** 터미널은 탭 UI 가 보일 때까지 세션 시작을 미루므로
+     * (`deferSessionStartUntilUiShown`), 가려진 탭은 기다려도 영원히 붙지 않는다(실측).
+     */
+    private fun awaitTabReady(
+        project: Project,
+        tab: TerminalSessionRegistry.Tab,
+        running: TerminalRun,
+        onLine: (String) -> Unit,
+        onDone: (TaskResult) -> Unit,
+        proceed: (TerminalSessionRegistry.Tab) -> Unit,
+    ) {
+        if (tab.ready) {
+            proceed(tab)
+            return
+        }
+
+        // 보이게만 하면 세션이 시작된다 — 키보드 포커스는 뺏지 않는다
+        TerminalTabFocuser.focus(project, tab.label, moveFocus = false)
+        onLine("· waiting for the terminal to start…")
+        val startedAt = System.currentTimeMillis()
+        running.attachReady(
+            AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay({
+                if (running.canceled || running.readyResolved) return@scheduleWithFixedDelay
+                when {
+                    tab.ready -> {
+                        running.markReadyResolved()
+                        // 셸이 rc 파일을 읽는 동안은 실행중 판별이 흔들린다 — 조금 가라앉힌다
+                        AppExecutorUtil.getAppScheduledExecutorService().schedule(
+                            { ApplicationManager.getApplication().invokeLater { proceed(tab) } },
+                            SHELL_SETTLE_MS, TimeUnit.MILLISECONDS,
+                        )
+                    }
+
+                    System.currentTimeMillis() - startedAt > READY_TIMEOUT_MS -> {
+                        running.markReadyResolved()
+                        onDone(
+                            TaskResult(
+                                -1, SessionState.UNKNOWN, null,
+                                "The terminal did not finish starting up",
+                            )
+                        )
+                    }
+                }
+            }, 0, READY_POLL_MS, TimeUnit.MILLISECONDS)
+        )
     }
 
     // --- 실행 경로 ---
@@ -123,7 +185,7 @@ class TerminalTaskLauncher(
         // executeCommand 는 셸 프롬프트 준비를 기다린다 (TTY 직접 쓰기는 초기화 중 유실된다)
         onLine("$ $command")
         runCatching { widget.executeCommand(command) }
-            .onFailure { onLine("· 명령 실행 실패: ${it.message}") }
+            .onFailure { onLine("· command failed: ${it.message}") }
         onState(SessionState.WORKING)
     }
 
@@ -147,7 +209,7 @@ class TerminalTaskLauncher(
     ) {
         val shell = tab.shell
         if (shell == null) {
-            onDone(TaskResult(-1, SessionState.UNKNOWN, null, "그 탭에서는 명령을 실행할 수 없다"))
+            onDone(TaskResult(-1, SessionState.UNKNOWN, null, "Cannot run a command in that tab"))
             return
         }
 
@@ -161,10 +223,10 @@ class TerminalTaskLauncher(
         awaitHookStop(hooks, sessionId, sentAt, running, onLine, onState, onDone)
 
         tab.focus()
-        onLine("· 셸 탭에서 claude 를 띄운다")
+        onLine("· starting claude in the shell tab")
         onLine("$ $command")
         runCatching { shell.executeCommand(command) }
-            .onFailure { onLine("· 명령 실행 실패: ${it.message}") }
+            .onFailure { onLine("· command failed: ${it.message}") }
         onState(SessionState.WORKING)
     }
 
@@ -181,7 +243,7 @@ class TerminalTaskLauncher(
     ) {
         val sessionId = tab.sessionId
         if (sessionId == null) {
-            onDone(TaskResult(-1, SessionState.UNKNOWN, null, "그 탭의 세션 ID 를 알 수 없다"))
+            onDone(TaskResult(-1, SessionState.UNKNOWN, null, "Unknown session id for that tab"))
             return
         }
         task.sessionId = sessionId
@@ -216,7 +278,7 @@ class TerminalTaskLauncher(
             return
         }
 
-        onLine("· 세션 찾는 중… (보낸 프롬프트로 조회)")
+        onLine("· locating session… (matching the prompt we sent)")
         running.attachDiscovery(
             AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay({
                 if (running.canceled || running.discovered) return@scheduleWithFixedDelay
@@ -226,14 +288,14 @@ class TerminalTaskLauncher(
                     val id = SessionPaths.sessionIdOf(file)
                     task.sessionId = id
                     registryProvider().bindSession(tab.label, id)
-                    onLine("· 세션 확인: ${id.take(8)}")
+                    onLine("· session found: ${id.take(8)}")
                     watchSession(file, running, onLine, onDone)
                 } else if (System.currentTimeMillis() - sentAt > DISCOVER_TIMEOUT_MS) {
                     running.markDiscovered()
                     onDone(
                         TaskResult(
                             -1, SessionState.UNKNOWN, null,
-                            "그 탭에서 세션을 찾지 못했다 — claude 가 실행 중인 탭인지 확인해야 한다",
+                            "No session found in that tab — make sure claude is running there",
                         )
                     )
                 }
@@ -255,7 +317,7 @@ class TerminalTaskLauncher(
         // 전송 전에 구독해야 빠른 응답의 Stop 을 놓치지 않는다
         running.attach(
             hooks.awaitStop(sessionId, sentAt) { signal ->
-                onLine("· Stop 훅 수신 (세션 ${signal.sessionId.take(8)})")
+                onLine("· Stop hook received (session ${signal.sessionId.take(8)})")
                 running.stopTimeout()
                 onState(SessionState.DONE)
                 onDone(TaskResult(0, SessionState.DONE, null, null))
@@ -289,7 +351,7 @@ class TerminalTaskLauncher(
                     SessionState.DONE -> {
                         running.stopTimeout()
                         running.stopWatch()
-                        onLine("· jsonl 판정: 완료")
+                        onLine("· jsonl verdict: done")
                         onDone(TaskResult(0, SessionState.DONE, null, null))
                     }
 
@@ -298,9 +360,9 @@ class TerminalTaskLauncher(
                         if (idleStreak >= IDLE_STREAK_TO_FAIL) {
                             running.stopTimeout()
                             running.stopWatch()
-                            onLine("· jsonl 판정: 중단됨")
+                            onLine("· jsonl verdict: interrupted")
                             onDone(
-                                TaskResult(-1, SessionState.IDLE, null, "세션이 중단됐다 (사용자 인터럽트)")
+                                TaskResult(-1, SessionState.IDLE, null, "Session was interrupted by the user")
                             )
                         }
                     }
@@ -316,7 +378,7 @@ class TerminalTaskLauncher(
             onDone(
                 TaskResult(
                     -1, SessionState.UNKNOWN, null,
-                    "완료 신호를 못 받았다 (${TIMEOUT_MIN}분 초과)",
+                    "No completion signal after ${TIMEOUT_MIN} minutes",
                 )
             )
         }
@@ -326,7 +388,7 @@ class TerminalTaskLauncher(
     private fun sendPrompt(tab: TerminalSessionRegistry.Tab, task: TaskEntry, onLine: (String) -> Unit) {
         val text = singleLine(task.prompt)
         tab.focus()
-        tab.write(text).onFailure { onLine("· 전송 실패: ${it.message}") }
+        tab.write(text).onFailure { onLine("· send failed: ${it.message}") }
         onLine("› ${text.take(120)}")
     }
 
@@ -409,6 +471,25 @@ class TerminalTaskLauncher(
         @Volatile
         private var discovery: ScheduledFuture<*>? = null
 
+        /** 탭 준비 대기 — 세션 탐색과 다른 슬롯이어야 한다(둘이 이어서 돈다) */
+        @Volatile
+        private var readyWait: ScheduledFuture<*>? = null
+
+        @Volatile
+        var readyResolved = false
+            private set
+
+        fun attachReady(future: ScheduledFuture<*>) {
+            readyWait = future
+            if (canceled) future.cancel(false)
+        }
+
+        fun markReadyResolved() {
+            readyResolved = true
+            readyWait?.cancel(false)
+            readyWait = null
+        }
+
         @Volatile
         private var watch: SessionWatcher.Handle? = null
 
@@ -461,6 +542,7 @@ class TerminalTaskLauncher(
             canceled = true
             registration?.cancel()
             discovery?.cancel(false)
+            readyWait?.cancel(false)
             stopWatch()
             stopTimeout()
         }
@@ -479,5 +561,10 @@ class TerminalTaskLauncher(
 
         /** 일시적 IDLE 로 실패 처리하지 않도록 연속 관측을 요구한다 */
         const val IDLE_STREAK_TO_FAIL = 3
+
+        /** 탭 준비 대기 — 셸이 뜨고 rc 파일을 읽는 시간 */
+        const val READY_POLL_MS = 200L
+        const val READY_TIMEOUT_MS = 20_000L
+        const val SHELL_SETTLE_MS = 600L
     }
 }

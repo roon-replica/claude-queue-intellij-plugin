@@ -151,7 +151,7 @@ class SessionScannerTest {
     @Test
     fun `lastQuestionText 는 ExitPlanMode 에 고정 문구`() {
         val content = """[{"type":"tool_use","name":"ExitPlanMode","input":{}}]"""
-        assertEquals("계획을 검토해줘", SessionScanner.lastQuestionText(jsonl(assistant("tool_use", content))))
+        assertEquals("Review the plan", SessionScanner.lastQuestionText(jsonl(assistant("tool_use", content))))
     }
 
     @Test

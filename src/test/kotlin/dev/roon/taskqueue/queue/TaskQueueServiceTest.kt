@@ -3,6 +3,7 @@ package dev.roon.taskqueue.queue
 import dev.roon.taskqueue.session.SessionState
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -248,6 +249,39 @@ class TaskQueueServiceTest {
         val b = queue.addTodo("B", "/tmp")
         queue.reorderGroup(listOf(b.id, "없는-id"))
         assertEquals(listOf(a.id, b.id), queue.tasks.map { it.id })
+    }
+
+    @Test
+    fun `실행 전 프롬프트는 수정된다`() {
+        queue.pause()
+        val t = queue.addTodo("원래 문장", "/tmp")
+        assertTrue(queue.updatePrompt(t.id, "  고친 문장  "))
+        assertEquals("고친 문장", queue.find(t.id)!!.prompt)
+    }
+
+    @Test
+    fun `실행 중 항목의 프롬프트는 수정하지 않는다`() {
+        val t = enqueueAndRun("원래 문장", "/tmp")
+        assertFalse(queue.updatePrompt(t.id, "고친 문장"))
+        assertEquals("원래 문장", queue.find(t.id)!!.prompt)
+    }
+
+    @Test
+    fun `대기줄에 올라간 항목도 수정하지 않는다`() {
+        queue.pause()
+        val t = queue.addTodo("원래 문장", "/tmp")
+        queue.promote(t.id)
+        assertEquals(TaskStatus.QUEUED, t.status)
+        assertFalse(queue.updatePrompt(t.id, "고친 문장"))
+        assertEquals("원래 문장", queue.find(t.id)!!.prompt)
+    }
+
+    @Test
+    fun `빈 프롬프트로는 덮어쓰지 않는다`() {
+        queue.pause()
+        val t = queue.addTodo("원래 문장", "/tmp")
+        assertFalse(queue.updatePrompt(t.id, "   "))
+        assertEquals("원래 문장", queue.find(t.id)!!.prompt)
     }
 
     @Test

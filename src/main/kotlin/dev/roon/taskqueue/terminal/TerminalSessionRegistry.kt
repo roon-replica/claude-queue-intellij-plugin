@@ -2,6 +2,7 @@ package dev.roon.taskqueue.terminal
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.util.Disposer
 import com.intellij.terminal.JBTerminalWidget
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
 
@@ -42,6 +43,10 @@ class TerminalSessionRegistry {
 
         /** 셸 조작이 가능한 탭인지 — 명령 실행/실행중 판별에 필요하다 */
         val shell: ShellTerminalWidget? get() = widget as? ShellTerminalWidget
+
+        /** tty 가 붙었는지. 붙기 전에는 명령을 넣어도 유실된다 */
+        val ready: Boolean
+            get() = runCatching { widget.ttyConnector?.isConnected == true }.getOrDefault(false)
 
         /**
          * 그 탭에서 무언가 돌고 있는지. claude 가 켜져 있으면 true.
@@ -92,9 +97,16 @@ class TerminalSessionRegistry {
         return "$base ($i)"
     }
 
-    /** 탭이 닫히면 tty 연결이 끊긴다 */
-    private fun isAlive(widget: JBTerminalWidget): Boolean =
-        runCatching { widget.ttyConnector?.isConnected == true }.getOrDefault(false)
+    /**
+     * 탭이 닫혔는지.
+     *
+     * `ttyConnector` 는 **세션 시작 전에도 null** 이다 — null 을 죽음으로 보면 방금 고른 탭이
+     * 곧바로 목록에서 사라지고 "탭이 없다" 로 실패한다(실측). null 은 "아직" 으로 본다.
+     */
+    private fun isAlive(widget: JBTerminalWidget): Boolean = runCatching {
+        if (Disposer.isDisposed(widget)) return false
+        widget.ttyConnector?.isConnected ?: true
+    }.getOrDefault(false)
 
     companion object {
         fun getInstance(): TerminalSessionRegistry = service()

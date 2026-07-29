@@ -7,7 +7,12 @@ import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import dev.roon.taskqueue.queue.TaskEntry
 import java.awt.BorderLayout
+import java.awt.Cursor
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import javax.swing.DefaultListModel
+import javax.swing.Icon
+import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
 
@@ -30,11 +35,39 @@ class QueueColumn(
         border = JBUI.Borders.empty(4, 6)
     }
 
+    /** 이 컬럼에만 해당되는 동작을 헤더 오른쪽에 둔다 (예: 완료 정리) */
+    private val headerAction = JLabel().apply {
+        border = JBUI.Borders.empty(2, 6)
+        isVisible = false
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+    }
+
     private val baseTitle = title
 
     init {
-        add(header, BorderLayout.NORTH)
+        val headerRow = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(header, BorderLayout.CENTER)
+            add(headerAction, BorderLayout.EAST)
+        }
+        add(headerRow, BorderLayout.NORTH)
         add(JBScrollPane(list), BorderLayout.CENTER)
+    }
+
+    /** 헤더 버튼 설정. [enabled] 가 false 면 흐리게 보이고 눌리지 않는다 */
+    fun setHeaderAction(icon: Icon, tooltip: String, onClick: () -> Unit) {
+        headerAction.icon = icon
+        headerAction.toolTipText = tooltip
+        headerAction.isVisible = true
+        headerAction.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (headerAction.isEnabled) onClick()
+            }
+        })
+    }
+
+    fun setHeaderActionEnabled(enabled: Boolean) {
+        headerAction.isEnabled = enabled
     }
 
     /** 목록 교체. 선택 항목은 id 로 복원한다 */
