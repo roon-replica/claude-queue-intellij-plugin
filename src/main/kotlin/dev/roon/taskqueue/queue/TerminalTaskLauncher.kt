@@ -8,6 +8,7 @@ import dev.roon.taskqueue.cli.ClaudeCli
 import dev.roon.taskqueue.hook.StopHookWatcher
 import dev.roon.taskqueue.session.SessionFinder
 import dev.roon.taskqueue.session.SessionPaths
+import dev.roon.taskqueue.session.SessionScanner
 import dev.roon.taskqueue.session.SessionState
 import dev.roon.taskqueue.session.SessionWatcher
 import dev.roon.taskqueue.terminal.TerminalSessionRegistry
@@ -328,7 +329,7 @@ class TerminalTaskLauncher(
                 onLine("· Stop hook received (session ${signal.sessionId.take(8)})")
                 running.stopTimeout()
                 onState(SessionState.DONE)
-                onDone(TaskResult(0, SessionState.DONE, null, null))
+                onDone(TaskResult(0, SessionState.DONE, null, null, summary = signal.lastMessage))
             }
         )
         armTimeout(running, onDone)
@@ -360,7 +361,9 @@ class TerminalTaskLauncher(
                         running.stopTimeout()
                         running.stopWatch()
                         onLine("· jsonl verdict: done")
-                        onDone(TaskResult(0, SessionState.DONE, null, null))
+                        // 훅이 없는 경로라 전사에서 직접 읽는다 (같은 정보)
+                        val summary = SessionScanner.lastAssistantText(file).takeIf { it.isNotBlank() }
+                        onDone(TaskResult(0, SessionState.DONE, null, null, summary = summary))
                     }
 
                     SessionState.IDLE -> {

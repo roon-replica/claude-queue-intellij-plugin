@@ -12,6 +12,11 @@ import kotlin.test.assertTrue
  */
 class StopHookPayloadTest {
 
+    /** 훅이 준 마지막 답변 — 카드·알림에 실린다 */
+    private fun lastMessage(json: String): String? =
+        JsonParser.parseString(json).asJsonObject
+            .get("last_assistant_message")?.takeIf { it.isJsonPrimitive }?.asString
+
     /** StopHookWatcher.parse 와 같은 규칙 — 서비스 인스턴스 없이 검증하려고 복제 */
     private fun read(json: String): Triple<String, String?, String?>? {
         val root = JsonParser.parseString(json).asJsonObject
@@ -53,6 +58,17 @@ class StopHookPayloadTest {
         val r = read("""{"session_id":"a","stop_hook_active":false}""")!!
         assertEquals("a", r.first)
         assertNull(r.second)
+    }
+
+    @Test
+    fun `실측 payload 에서 마지막 답변을 읽는다`() {
+        val json = """{"session_id":"a","stop_hook_active":false,"last_assistant_message":"2"}"""
+        assertEquals("2", lastMessage(json))
+    }
+
+    @Test
+    fun `마지막 답변이 없어도 된다`() {
+        assertNull(lastMessage("""{"session_id":"a"}"""))
     }
 
     @Test

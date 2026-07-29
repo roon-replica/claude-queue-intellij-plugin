@@ -8,6 +8,8 @@ data class TaskResult(
     val finalState: SessionState,
     val costUsd: Double?,
     val errorMessage: String?,
+    /** claude 의 마지막 답변 — 터미널을 열지 않고도 결과를 알 수 있게 카드에 보여준다 */
+    val summary: String? = null,
 )
 
 /** 실행 중 작업 취소 핸들 */

@@ -45,7 +45,13 @@ class StopHookWatcher : Disposable {
         fun cancel()
     }
 
-    data class StopSignal(val sessionId: String, val transcriptPath: String?, val cwd: String?)
+    data class StopSignal(
+    val sessionId: String,
+    val transcriptPath: String?,
+    val cwd: String?,
+    /** 훅이 함께 넘겨주는 claude 의 마지막 답변 */
+    val lastMessage: String?,
+)
 
     /**
      * 훅이 파일을 남길 디렉토리.
@@ -123,6 +129,7 @@ class StopHookWatcher : Disposable {
             sessionId = sessionId,
             transcriptPath = root.get("transcript_path")?.takeIf { it.isJsonPrimitive }?.asString,
             cwd = root.get("cwd")?.takeIf { it.isJsonPrimitive }?.asString,
+            lastMessage = root.get("last_assistant_message")?.takeIf { it.isJsonPrimitive }?.asString,
         )
     } catch (e: Exception) {
         thisLogger().warn("Failed to parse Stop hook file: ${file.name}", e)

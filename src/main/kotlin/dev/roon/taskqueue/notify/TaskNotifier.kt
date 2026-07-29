@@ -27,11 +27,20 @@ object TaskNotifier : TaskNotifications {
 
     private const val GROUP = "Task Queue"
 
+    /** 알림에 싣는 답변 길이 */
+    private const val SUMMARY_MAX = 120
+
     /** 개별 작업 종료. 실패는 눈에 걸려야 하므로 ERROR 로 띄운다 */
     override fun taskFinished(task: TaskEntry) {
         val label = task.shortLabel().ifEmpty { "task" }
         when (task.status) {
-            TaskStatus.DONE -> notify("Task done", label, NotificationType.INFORMATION, task.cwd)
+            // 답변이 있으면 그걸 보여준다 — 알림만 보고도 결과를 알 수 있게
+            TaskStatus.DONE -> notify(
+                "Task done",
+                task.summary?.let { "$label\n${oneLine(it).take(SUMMARY_MAX)}" } ?: label,
+                NotificationType.INFORMATION,
+                task.cwd,
+            )
             TaskStatus.FAILED -> notify(
                 "Task failed",
                 listOfNotNull(label, task.errorMessage).joinToString(" — "),
@@ -56,6 +65,9 @@ object TaskNotifier : TaskNotifications {
         val type = if (failed > 0) NotificationType.WARNING else NotificationType.INFORMATION
         notify("Task queue finished", body, type, cwd)
     }
+
+    /** 답변은 여러 줄일 수 있다 — 알림은 짧게 */
+    private fun oneLine(text: String): String = text.replace(Regex("\\s+"), " ").trim()
 
     /**
      * OS 알림으로 띄우고, IDE 쪽에는 Event Log 기록만 남긴다.

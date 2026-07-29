@@ -80,6 +80,9 @@ class TaskEntry() {
     /** 큐 소진 요약 알림에 이미 포함됐는지 — 같은 건을 두 번 세지 않는다 */
     var notified: Boolean = false
 
+    /** claude 의 마지막 답변. 터미널을 열지 않고도 결과를 알 수 있게 카드에 보여준다 */
+    var summary: String? = null
+
     /** 종료 시점의 jsonl 판정 결과 — 프로세스 종료와 별개로 기록 */
     var finalState: SessionState = SessionState.UNKNOWN
 

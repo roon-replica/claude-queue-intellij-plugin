@@ -41,6 +41,11 @@ class TaskCardRenderer(
         font = JBFont.small()
     }
 
+    /** claude 의 마지막 답변 — 터미널을 열지 않고도 결과를 알 수 있게 */
+    private val summary = JLabel().apply {
+        font = JBFont.small()
+    }
+
     /** 카드에서 바로 누르는 버튼들. 실제 클릭 판정은 리스트가 좌표로 한다 */
     private val edit = iconButton(AllIcons.Actions.Edit, "Edit this task")
     private val run = iconButton(AllIcons.Actions.Execute, "Run this task")
@@ -57,7 +62,8 @@ class TaskCardRenderer(
         val texts = JPanel(BorderLayout()).apply {
             isOpaque = false
             add(title, BorderLayout.NORTH)
-            add(meta, BorderLayout.SOUTH)
+            add(meta, BorderLayout.CENTER)
+            add(summary, BorderLayout.SOUTH)
         }
         // FlowLayout 은 숨긴 컴포넌트를 건너뛴다 — todo 가 아니면 ✕ 만 오른쪽에 남는다
         val actions = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
@@ -105,6 +111,13 @@ class TaskCardRenderer(
         // 끝난 작업은 흐리게 — 지금 돌거나 앞으로 돌 작업에 시선이 가게
         title.foreground = if (task.status.isFinished && !isSelected) JBColor.GRAY else fg
 
+        // 결과 요약은 있을 때만 한 줄 차지한다
+        val result = task.summary?.let { oneLine(it) }
+        summary.isVisible = result != null && task.status.isFinished
+        summary.text = result?.let { "↳ ${it.take(SUMMARY_MAX)}" } ?: ""
+        summary.foreground = if (isSelected) fg else JBColor.GRAY
+        summary.toolTipText = task.summary
+
         meta.text = metaOf(task)
         meta.foreground = when {
             isSelected -> fg
@@ -135,6 +148,8 @@ class TaskCardRenderer(
                     SessionState.WORKING -> "working"
                     else -> "starting"
                 }
+                // 경과 시간이 없으면 멈춘 건지 오래 걸리는 건지 구분이 안 된다
+                task.startedAt?.let { parts += duration(System.currentTimeMillis() - it) }
             }
 
             TaskStatus.DONE -> {
@@ -159,6 +174,10 @@ class TaskCardRenderer(
         return parts.joinToString("  ·  ")
     }
 
+    /** 답변은 여러 줄일 수 있다 — 카드는 한 줄만 쓴다 */
+    private fun oneLine(text: String): String =
+        text.replace(Regex("\\s+"), " ").trim()
+
     /** 오늘 것은 시각만, 어제 이전은 날짜까지 */
     private fun clock(epochMs: Long): String {
         val at = Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault())
@@ -169,8 +188,13 @@ class TaskCardRenderer(
     private fun elapsed(task: TaskEntry): String? {
         val s = task.startedAt ?: return null
         val f = task.finishedAt ?: return null
-        val sec = (f - s) / 1000.0
-        return if (sec < 60) "%.1fs".format(sec) else "%dm %ds".format((sec / 60).toInt(), (sec % 60).toInt())
+        return duration(f - s)
+    }
+
+    /** 1분 미만은 초만, 넘으면 분+초. 실행 중에는 1초마다 갱신되므로 소수점을 쓰지 않는다 */
+    private fun duration(millis: Long): String {
+        val sec = (millis / 1000).coerceAtLeast(0)
+        return if (sec < 60) "${sec}s" else "${sec / 60}m ${sec % 60}s"
     }
 
     private fun blend(base: Color, tint: Color, ratio: Float) = StatusColors.blend(base, tint, ratio)
@@ -216,6 +240,9 @@ class TaskCardRenderer(
 
         /** 마우스 올린 행의 강조 — 아주 옅게 */
         private const val HOVER_MIX = 0.07f
+
+        /** 카드에 싣는 답변 길이. 전문은 툴팁으로 본다 */
+        private const val SUMMARY_MAX = 90
 
         private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
         private val DATE_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("M/d HH:mm")

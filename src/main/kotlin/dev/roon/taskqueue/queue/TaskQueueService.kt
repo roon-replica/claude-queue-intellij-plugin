@@ -294,6 +294,7 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         runningId = null
         task.costUsd = result.costUsd
         task.finalState = result.finalState
+        result.summary?.trim()?.takeIf { it.isNotEmpty() }?.let { task.summary = it }
 
         val failed = result.exitCode != 0 || result.errorMessage != null
         finish(

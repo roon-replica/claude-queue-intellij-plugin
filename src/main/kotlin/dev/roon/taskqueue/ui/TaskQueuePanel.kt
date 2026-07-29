@@ -7,8 +7,10 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.CustomShortcutSet
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
@@ -33,7 +35,9 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
 import javax.swing.Icon
+import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.Timer
 
 /**
  * 자동작업 큐 보드 — todo / 진행 / 완료 3컬럼.
@@ -66,6 +70,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private val columns: List<QueueColumn> = listOf(todoColumn, activeColumn, doneColumn)
 
     private fun repaintColumns() = columns.forEach { it.list.repaint() }
+
+    /**
+     * 실행 중 카드의 경과 시간을 1초마다 갱신한다.
+     * 실행 중 작업이 없으면 멈춘다 — 유휴 상태에서 헛돌 이유가 없다.
+     */
+    private val ticker = Timer(1_000) { activeColumn.list.repaint() }
 
     private val statusLabel = JBLabel().apply {
         font = JBFont.small()
@@ -185,10 +195,37 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             })
         }
 
+        columns.forEach { registerShortcuts(it) }
         TaskDragAndDrop.install(columns, queue::reorderGroup, ::dropTo, fixed = setOf(doneColumn))
 
         // 완료 정리는 완료 컬럼에만 해당되는 동작이라 그 헤더에 둔다
         doneColumn.setHeaderAction(AllIcons.Actions.GC, "Clear finished and failed tasks") { queue.clearFinished() }
+    }
+
+    /**
+     * 카드 목록 단축키. **컴포넌트 범위로 등록한다** — 전역 키맵을 덮지 않으므로
+     * F2("다음 오류로 이동") 같은 기본 동작이 다른 곳에서는 그대로 살아 있다.
+     */
+    private fun registerShortcuts(column: QueueColumn) {
+        val list = column.list
+
+        shortcut("DELETE", "BACK_SPACE", on = list) {
+            column.selected?.let { queue.remove(it.id) }
+        }
+        shortcut("meta ENTER", on = list) {
+            val task = column.selected ?: return@shortcut
+            if (task.status == TaskStatus.TODO || task.status.isFinished) {
+                chooseTerminal { tab -> queue.promote(task.id, tab) }
+            }
+        }
+        shortcut("F2", on = list) {
+            column.selected?.takeIf { it.status == TaskStatus.TODO }?.let { editPrompt(it) }
+        }
+    }
+
+    private fun shortcut(vararg keys: String, on: JComponent, run: () -> Unit) {
+        DumbAwareAction.create { run() }
+            .registerCustomShortcutSet(CustomShortcutSet.fromString(*keys), on)
     }
 
     /** 카드 오른쪽 버튼 영역 클릭 결과 */
@@ -329,6 +366,13 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val moved = highlighter.onTasksChanged(all.map { it.id to it.status })
         moved.forEach { id -> columns.forEach { it.scrollTo(id) } }
 
+        // 실행 중일 때만 초 단위 갱신
+        if (queue.runningTask() != null) {
+            if (!ticker.isRunning) ticker.start()
+        } else if (ticker.isRunning) {
+            ticker.stop()
+        }
+
         statusLabel.text = buildString {
             append(if (queue.autoAdvance) "Auto-advance ON" else "Paused")
             queue.runningTask()?.let { append("  ·  running: ${it.shortLabel()}") }
@@ -415,5 +459,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         queue.removeListener(queueListener)
         queue.removeLogListener(logListener)
         highlighter.stop()
+        ticker.stop()
     }
 }
