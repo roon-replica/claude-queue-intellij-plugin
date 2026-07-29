@@ -1,0 +1,10 @@
+<idea-plugin>
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Task Queue"
+                    anchor="bottom"
+                    factoryClass="dev.roon.taskqueue.ui.TaskQueueToolWindowFactory"/>
+        <applicationService serviceImplementation="dev.roon.taskqueue.cli.ClaudeCli"/>
+    </extensions>
+</idea-plugin>
