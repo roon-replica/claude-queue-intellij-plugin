@@ -31,7 +31,6 @@ class TerminalTaskLauncher(
     override fun launch(
         task: TaskEntry,
         onLine: (String) -> Unit,
-        onText: (String) -> Unit,
         onState: (SessionState) -> Unit,
         onDone: (TaskResult) -> Unit,
     ): RunningTask {

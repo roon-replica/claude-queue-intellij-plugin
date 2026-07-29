@@ -7,40 +7,36 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.ide.DataManager
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.ComboBox
-import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import dev.roon.taskqueue.cli.ClaudeCli
-import dev.roon.taskqueue.nav.FileNavigator
-import dev.roon.taskqueue.nav.FileRefs
 import dev.roon.taskqueue.queue.ExecMode
 import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
+import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
-import javax.swing.DefaultListModel
 import javax.swing.Icon
 import javax.swing.JPanel
-import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
 
 /**
- * 자동작업 큐 보드 — todo / 진행 / 완료 3컬럼 + 실행 로그 + 결과 참조.
+ * 자동작업 큐 보드 — todo / 진행 / 완료 3컬럼 + 실행 로그.
  * 추가는 todo 로만 들어가고, ▶ 로 올릴 때 실행된다.
  */
 class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
@@ -53,11 +49,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
 
-    /** 실행할 터미널 탭 — 열린 탭을 고르거나 새로 만든다 */
-    private val terminalCombo = ComboBox<String>().apply {
-        addItem(NEW_TERMINAL)
-        toolTipText = "작업을 실행할 터미널 탭. 열린 탭을 고르면 그 탭에서 실행한다"
-    }
 
     private val todoColumn = QueueColumn("TODO", "여기에 작업을 적어둔다")
     private val activeColumn = QueueColumn("진행", "▶ 로 올리면 여기서 순서대로 실행")
@@ -75,26 +66,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         font = JBFont.small()
     }
 
-    private val refsModel = DefaultListModel<FileRefs.Ref>()
-    private val refsList = JBList(refsModel).apply {
-        selectionMode = ListSelectionModel.SINGLE_SELECTION
-        emptyText.text = "결과에 나온 file:line — 더블클릭으로 이동"
-        cellRenderer = object : javax.swing.DefaultListCellRenderer() {
-            override fun getListCellRendererComponent(
-                list: javax.swing.JList<*>?,
-                value: Any?,
-                index: Int,
-                isSelected: Boolean,
-                cellHasFocus: Boolean,
-            ) = super.getListCellRendererComponent(
-                list,
-                (value as? FileRefs.Ref)?.label() ?: value,
-                index,
-                isSelected,
-                cellHasFocus,
-            )
-        }
-    }
 
     private var cliInfo = "claude 확인 중…"
 
@@ -108,12 +79,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
         promptField.addActionListener { addTodo() }
         wireColumns()
-        refsList.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) {
-                if (e.clickCount == 2) openSelectedRef()
-            }
-        })
-
         queue.addListener(queueListener)
         queue.addLogListener(logListener)
 
@@ -128,11 +93,11 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val group = DefaultActionGroup().apply {
             add(action("실행", "선택한 todo 를 진행줄로 올린다", AllIcons.Actions.Execute,
                 { selected()?.let { !it.status.isActive } == true }) {
-                selected()?.let { queue.promote(it.id) }
+                selected()?.let { task -> chooseTerminal { tab -> queue.promote(task.id, tab) } }
             })
             add(action("todo 전부 실행", "todo 전부를 진행줄로", AllIcons.Actions.RunAll,
                 { queue.todos().isNotEmpty() }) {
-                queue.runAllTodos()
+                chooseTerminal { tab -> queue.runAllTodos(tab) }
             })
             add(action("todo 로 되돌리기", "진행 대기 항목을 todo 로", AllIcons.Actions.Rollback,
                 { selected()?.status == TaskStatus.QUEUED }) {
@@ -172,10 +137,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
         val inputRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
             add(promptField, BorderLayout.CENTER)
-            add(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-                add(JBLabel("터미널").apply { font = JBFont.small() })
-                add(terminalCombo)
-            }, BorderLayout.EAST)
         }
 
         return JPanel(BorderLayout()).apply {
@@ -194,20 +155,14 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             }
         }
 
-        val detail = OnePixelSplitter(true, 0.7f).apply {
-            firstComponent = JPanel(BorderLayout()).apply {
-                add(sectionLabel("실행 로그"), BorderLayout.NORTH)
-                add(JBScrollPane(logArea), BorderLayout.CENTER)
-            }
-            secondComponent = JPanel(BorderLayout()).apply {
-                add(sectionLabel("결과 파일"), BorderLayout.NORTH)
-                add(JBScrollPane(refsList), BorderLayout.CENTER)
-            }
+        val logPanel = JPanel(BorderLayout()).apply {
+            add(sectionLabel("실행 로그"), BorderLayout.NORTH)
+            add(JBScrollPane(logArea), BorderLayout.CENTER)
         }
 
         return OnePixelSplitter(false, 0.62f).apply {
             firstComponent = board
-            secondComponent = detail
+            secondComponent = logPanel
         }
     }
 
@@ -224,7 +179,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 if (column.selected != null) {
                     columns.filter { it !== column }.forEach { it.clearSelection() }
                 }
-                refreshRefs()
             }
             // 더블클릭 = 컬럼 간 이동 (todo→진행, 진행→todo)
             column.list.addMouseListener(object : MouseAdapter() {
@@ -232,7 +186,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                     if (e.clickCount != 2) return
                     val task = column.selected ?: return
                     when (task.status) {
-                        TaskStatus.TODO -> queue.promote(task.id)
+                        TaskStatus.TODO -> chooseTerminal { tab -> queue.promote(task.id, tab) }
                         TaskStatus.QUEUED -> queue.demote(task.id)
                         else -> Unit
                     }
@@ -248,34 +202,53 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun addTodo() {
         val prompt = promptField.text?.trim().orEmpty()
         if (prompt.isEmpty()) return
-        queue.addTodo(prompt, cwd(), ExecMode.TERMINAL, currentTerminal())
+        queue.addTodo(prompt, cwd())
         promptField.text = ""
     }
 
-    /** 선택된 터미널 탭 이름. 빈 문자열이면 새 탭 */
-    private fun currentTerminal(): String =
-        (terminalCombo.selectedItem as? String)?.takeIf { it != NEW_TERMINAL }.orEmpty()
-
-    /** 열린 터미널 탭 목록을 콤보에 반영 */
-    private fun refreshTerminals() {
-        val open = runCatching {
-            TerminalToolWindowManager.getInstance(project).terminalWidgets
-                .map { it.terminalTitle.buildTitle() }
-                .filter { it.isNotBlank() }
-                .distinct()
-        }.getOrDefault(emptyList())
-
-        val current = terminalCombo.selectedItem as? String
-        val items = listOf(NEW_TERMINAL) + open
-        if ((0 until terminalCombo.itemCount).map { terminalCombo.getItemAt(it) } == items) return
-
-        terminalCombo.removeAllItems()
-        items.forEach { terminalCombo.addItem(it) }
-        terminalCombo.selectedItem = if (current in items) current else NEW_TERMINAL
-    }
 
     private fun cwd(): String =
         project.basePath ?: File(System.getProperty("user.home")).absolutePath
+
+    /**
+     * 실행할 터미널을 팔레트로 고른다. 열린 탭이 없으면 묻지 않고 새 탭으로 진행.
+     * @param onChosen 선택된 탭 이름 ("" = 새 탭)
+     */
+    private fun chooseTerminal(onChosen: (String) -> Unit) {
+        val tabs = openTerminals()
+        if (tabs.isEmpty()) {
+            onChosen("")
+            return
+        }
+
+        val items = listOf(NEW_TERMINAL) + tabs.map { it.label }
+        JBPopupFactory.getInstance()
+            .createPopupChooserBuilder(items)
+            .setTitle("실행할 터미널")
+            .setMovable(false)
+            .setResizable(false)
+            .setItemChosenCallback { chosen ->
+                val tab = tabs.firstOrNull { it.label == chosen }?.name ?: ""
+                onChosen(tab)
+            }
+            .createPopup()
+            .showInBestPositionFor(DataManager.getInstance().getDataContext(this))
+    }
+
+    /** 열린 터미널 탭 — claude 가 돌고 있으면 표시에 붙인다 */
+    private fun openTerminals(): List<TerminalChoice> = runCatching {
+        TerminalToolWindowManager.getInstance(project).widgets
+            .filterIsInstance<ShellTerminalWidget>()
+            .mapNotNull { widget ->
+                val name = runCatching { widget.terminalTitle.buildTitle() }.getOrNull()?.takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                val busy = runCatching { widget.hasRunningCommands() }.getOrDefault(false)
+                TerminalChoice(name, if (busy) "$name  (실행 중 — 그 대화에 프롬프트 전달)" else name)
+            }
+            .distinctBy { it.name }
+    }.getOrDefault(emptyList())
+
+    private data class TerminalChoice(val name: String, val label: String)
 
     private fun togglePause() {
         if (queue.autoAdvance) queue.pause() else queue.start()
@@ -300,7 +273,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     private fun refresh() {
-        refreshTerminals()
         val all = queue.tasks
         todoColumn.setTasks(all.filter { it.status == TaskStatus.TODO })
         activeColumn.setTasks(all.filter { it.status.isActive })
@@ -313,25 +285,8 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             append("  ·  ").append(cliInfo)
         }
 
-        refreshRefs()
     }
 
-    private fun refreshRefs() {
-        val task = selected() ?: queue.runningTask()
-        val refs = task?.let { queue.refs(it.id) } ?: emptyList()
-        if (refsModel.elements().toList() == refs) return
-        refsModel.clear()
-        refs.forEach { refsModel.addElement(it) }
-    }
-
-    private fun openSelectedRef() {
-        val ref = refsList.selectedValue ?: return
-        val task = selected() ?: queue.runningTask() ?: return
-        val file = FileRefs.resolve(ref, File(task.cwd))
-        if (!FileNavigator.open(project, file, ref.line)) {
-            statusLabel.text = "열 수 없음: ${file.absolutePath}"
-        }
-    }
 
 
     /** 원시 stream-json 대신 사람이 읽는 한 줄로 */

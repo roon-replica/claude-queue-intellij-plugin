@@ -22,7 +22,6 @@ class ClaudeTaskLauncher(
     override fun launch(
         task: TaskEntry,
         onLine: (String) -> Unit,
-        onText: (String) -> Unit,
         onState: (SessionState) -> Unit,
         onDone: (TaskResult) -> Unit,
     ): RunningTask {
@@ -55,10 +54,8 @@ class ClaudeTaskLauncher(
                     sessionId = sessionId,
                     resume = resume,
                     onEvent = { e ->
-                        e.assistantText?.let(onText)
                         if (e.isResult) {
                             cost = e.totalCostUsd
-                            e.resultText?.let(onText)
                             if (e.isError) errorMessage = e.resultText?.take(300) ?: "CLI 오류"
                         }
                     },

@@ -6,9 +6,7 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
 import com.intellij.util.xmlb.annotations.XCollection
-import dev.roon.taskqueue.nav.FileRefs
 import dev.roon.taskqueue.session.SessionState
-import java.io.File
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -33,8 +31,6 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     /** 실행 중 작업의 최근 출력 — 메모리 누적을 막기 위해 상한을 둔다 */
     private val logBuffer = ArrayDeque<String>()
 
-    /** taskId → 결과에서 뽑은 file:line 참조 */
-    private val refsByTask = mutableMapOf<String, MutableList<FileRefs.Ref>>()
 
     /** 헤드리스 러너 (테스트에서 교체) */
     var launcher: TaskLauncher = ClaudeTaskLauncher()
@@ -89,20 +85,6 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     /** 실행 중 작업의 최근 출력 스냅샷 */
     fun recentLog(): List<String> = synchronized(logBuffer) { logBuffer.toList() }
 
-    /** 작업 결과에서 뽑은 file:line 참조 (영속화하지 않는다 — 세션 한정) */
-    fun refs(taskId: String): List<FileRefs.Ref> = synchronized(refsByTask) {
-        refsByTask[taskId]?.toList() ?: emptyList()
-    }
-
-    private fun collectRefs(task: TaskEntry, text: String) {
-        val found = FileRefs.extract(text, File(task.cwd))
-        if (found.isEmpty()) return
-        synchronized(refsByTask) {
-            val list = refsByTask.getOrPut(task.id) { mutableListOf() }
-            found.forEach { if (it !in list) list += it }
-        }
-        notifyChanged()
-    }
 
     private fun appendLog(line: String) {
         synchronized(logBuffer) {
@@ -130,10 +112,14 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         return task
     }
 
-    /** TODO → QUEUED. 순서가 오면 실행된다 */
-    fun promote(id: String) {
+    /**
+     * TODO → QUEUED. 순서가 오면 실행된다.
+     * @param terminalTab 실행할 터미널 탭. null 이면 기존 설정 유지, "" 이면 새 탭
+     */
+    fun promote(id: String, terminalTab: String? = null) {
         val task = find(id) ?: return
         if (task.status != TaskStatus.TODO && !task.status.isFinished) return
+        terminalTab?.let { task.terminalTab = it }
         task.status = TaskStatus.QUEUED
         task.errorMessage = null
         task.exitCode = null
@@ -151,10 +137,13 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     }
 
     /** TODO 전부를 대기줄로 올린다 */
-    fun runAllTodos() {
+    fun runAllTodos(terminalTab: String? = null) {
         val ids = todos().map { it.id }
         ids.forEach { id ->
-            find(id)?.let { it.status = TaskStatus.QUEUED }
+            find(id)?.let {
+                terminalTab?.let { tab -> it.terminalTab = tab }
+                it.status = TaskStatus.QUEUED
+            }
         }
         if (ids.isNotEmpty()) notifyChanged()
         maybeStartNext()
@@ -228,7 +217,6 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         running = launcherFor(task).launch(
             task = task,
             onLine = { line -> appendLog(line) },
-            onText = { text -> collectRefs(task, text) },
             onState = { state -> onRunningState(task, state) },
             onDone = { result -> onTaskDone(task, result) },
         )
