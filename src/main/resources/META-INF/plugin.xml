@@ -7,5 +7,6 @@
                     factoryClass="dev.roon.taskqueue.ui.TaskQueueToolWindowFactory"/>
         <applicationService serviceImplementation="dev.roon.taskqueue.cli.ClaudeCli"/>
         <applicationService serviceImplementation="dev.roon.taskqueue.session.SessionWatcher"/>
+        <applicationService serviceImplementation="dev.roon.taskqueue.queue.TaskQueueService"/>
     </extensions>
 </idea-plugin>

@@ -1,0 +1,231 @@
+package dev.roon.taskqueue.queue
+
+import com.intellij.openapi.components.PersistentStateComponent
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.State
+import com.intellij.openapi.components.Storage
+import com.intellij.openapi.components.service
+import com.intellij.util.xmlb.annotations.XCollection
+import dev.roon.taskqueue.session.SessionState
+import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
+
+/** 큐 상태 스냅샷 — XML 로 영속화 */
+class TaskQueueState {
+    @get:XCollection(style = XCollection.Style.v2)
+    var tasks: MutableList<TaskEntry> = mutableListOf()
+}
+
+/**
+ * 자동작업 큐. application-level 이라 프로젝트 창을 닫아도 살아있다.
+ * 한 번에 1건만 실행(순차) — 병렬은 크로스 프로젝트(post-MVP)에서 도입.
+ */
+@Service
+@State(name = "TaskQueue", storages = [Storage("task-queue.xml")])
+class TaskQueueService : PersistentStateComponent<TaskQueueState> {
+
+    private var state = TaskQueueState()
+    private val listeners = CopyOnWriteArrayList<() -> Unit>()
+    private val logListeners = CopyOnWriteArrayList<(String) -> Unit>()
+
+    /** 실행 중 작업의 최근 출력 — 메모리 누적을 막기 위해 상한을 둔다 */
+    private val logBuffer = ArrayDeque<String>()
+
+    /** 테스트에서 교체 가능 */
+    var launcher: TaskLauncher = ClaudeTaskLauncher()
+
+    /** 시간 주입 — 테스트 결정성 확보 */
+    var clock: () -> Long = { System.currentTimeMillis() }
+
+    private var running: RunningTask? = null
+    private var runningId: String? = null
+
+    /** 자동 진행 여부. false 면 한 건 끝나도 다음을 시작하지 않는다 */
+    var autoAdvance: Boolean = true
+
+    // --- 조회 ---
+
+    val tasks: List<TaskEntry> get() = state.tasks.toList()
+
+    fun queued(): List<TaskEntry> = state.tasks.filter { it.status == TaskStatus.QUEUED }
+
+    fun runningTask(): TaskEntry? = runningId?.let { id -> state.tasks.find { it.id == id } }
+
+    fun find(id: String): TaskEntry? = state.tasks.find { it.id == id }
+
+    // --- 변경 ---
+
+    fun addListener(listener: () -> Unit) {
+        listeners += listener
+    }
+
+    fun removeListener(listener: () -> Unit) {
+        listeners -= listener
+    }
+
+    fun addLogListener(listener: (String) -> Unit) {
+        logListeners += listener
+    }
+
+    fun removeLogListener(listener: (String) -> Unit) {
+        logListeners -= listener
+    }
+
+    /** 실행 중 작업의 최근 출력 스냅샷 */
+    fun recentLog(): List<String> = synchronized(logBuffer) { logBuffer.toList() }
+
+    private fun appendLog(line: String) {
+        synchronized(logBuffer) {
+            logBuffer.addLast(line)
+            while (logBuffer.size > MAX_LOG_LINES) logBuffer.removeFirst()
+        }
+        logListeners.forEach { runCatching { it(line) } }
+    }
+
+    fun enqueue(prompt: String, cwd: String): TaskEntry {
+        val task = TaskEntry(UUID.randomUUID().toString(), prompt, cwd, clock())
+        state.tasks += task
+        notifyChanged()
+        maybeStartNext()
+        return task
+    }
+
+    /** 대기 중 항목 제거. 실행 중이면 취소 후 제거 */
+    fun remove(id: String) {
+        if (runningId == id) cancelRunning()
+        state.tasks.removeAll { it.id == id }
+        notifyChanged()
+    }
+
+    fun clearFinished() {
+        state.tasks.removeAll { it.status.isFinished }
+        notifyChanged()
+    }
+
+    /** 대기 항목 순서 이동 (실행 중 항목은 이동 대상이 아니다) */
+    fun move(id: String, delta: Int) {
+        val idx = state.tasks.indexOfFirst { it.id == id }
+        if (idx < 0) return
+        val target = (idx + delta).coerceIn(0, state.tasks.lastIndex)
+        if (target == idx) return
+        val item = state.tasks.removeAt(idx)
+        state.tasks.add(target, item)
+        notifyChanged()
+    }
+
+    /** 실패/취소 항목을 다시 큐에 올린다 (세션 ID 유지 → 같은 세션에 이어붙음) */
+    fun retry(id: String) {
+        val task = find(id) ?: return
+        if (!task.status.isFinished) return
+        task.status = TaskStatus.QUEUED
+        task.errorMessage = null
+        task.exitCode = null
+        task.finishedAt = null
+        notifyChanged()
+        maybeStartNext()
+    }
+
+    fun cancelRunning() {
+        val task = runningTask() ?: return
+        running?.cancel()
+        running = null
+        runningId = null
+        finish(task, TaskStatus.CANCELED, exitCode = null, errorMessage = "사용자 취소")
+    }
+
+    /** 큐 진행 시작 (autoAdvance 를 껐다 켠 뒤 이어서 돌릴 때) */
+    fun start() {
+        autoAdvance = true
+        maybeStartNext()
+    }
+
+    fun pause() {
+        autoAdvance = false
+    }
+
+    // --- 실행 ---
+
+    private fun maybeStartNext() {
+        if (!autoAdvance) return
+        if (runningId != null) return
+        val next = queued().firstOrNull() ?: return
+        startTask(next)
+    }
+
+    private fun startTask(task: TaskEntry) {
+        task.status = TaskStatus.RUNNING
+        task.startedAt = clock()
+        task.attempts += 1
+        runningId = task.id
+        synchronized(logBuffer) { logBuffer.clear() }
+        notifyChanged()
+
+        running = launcher.launch(
+            task = task,
+            onLine = { line -> appendLog(line) },
+            onState = { state -> onRunningState(task, state) },
+            onDone = { result -> onTaskDone(task, result) },
+        )
+    }
+
+    private fun onRunningState(task: TaskEntry, sessionState: SessionState) {
+        task.finalState = sessionState
+        notifyChanged()
+    }
+
+    /**
+     * 완료 판정: 프로세스 종료 코드가 1차 기준, jsonl 판정을 함께 기록한다.
+     * exit 0 이라도 result 이벤트가 error 면 실패로 본다.
+     */
+    private fun onTaskDone(task: TaskEntry, result: TaskResult) {
+        running = null
+        runningId = null
+        task.costUsd = result.costUsd
+        task.finalState = result.finalState
+
+        val failed = result.exitCode != 0 || result.errorMessage != null
+        finish(
+            task = task,
+            status = if (failed) TaskStatus.FAILED else TaskStatus.DONE,
+            exitCode = result.exitCode,
+            errorMessage = result.errorMessage ?: if (failed) "exit ${result.exitCode}" else null,
+        )
+        maybeStartNext()
+    }
+
+    private fun finish(task: TaskEntry, status: TaskStatus, exitCode: Int?, errorMessage: String?) {
+        task.status = status
+        task.exitCode = exitCode
+        task.errorMessage = errorMessage
+        task.finishedAt = clock()
+        notifyChanged()
+    }
+
+    private fun notifyChanged() {
+        listeners.forEach { runCatching { it() } }
+    }
+
+    // --- 영속화 ---
+
+    override fun getState(): TaskQueueState = state
+
+    /**
+     * IDE 종료로 죽은 RUNNING 은 QUEUED 로 되돌린다.
+     * 프로세스는 IDE 와 함께 죽으므로 그대로 두면 영원히 실행중으로 남는다.
+     */
+    override fun loadState(loaded: TaskQueueState) {
+        state = loaded
+        state.tasks.filter { it.status == TaskStatus.RUNNING }.forEach {
+            it.status = TaskStatus.QUEUED
+            it.startedAt = null
+        }
+        runningId = null
+        running = null
+    }
+
+    companion object {
+        private const val MAX_LOG_LINES = 500
+
+        fun getInstance(): TaskQueueService = service()
+    }
+}
