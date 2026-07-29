@@ -25,18 +25,18 @@ import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
 import dev.roon.taskqueue.terminal.TerminalSessionRegistry
+import dev.roon.taskqueue.terminal.TerminalTabFocuser
 import java.awt.BorderLayout
-import java.awt.FlowLayout
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
 import javax.swing.Icon
 import javax.swing.JPanel
-import javax.swing.SwingConstants
 
 /**
- * 자동작업 큐 보드 — todo / 진행 / 완료 3컬럼 + 실행 로그.
- * 추가는 todo 로만 들어가고, ▶ 로 올릴 때 실행된다.
+ * 자동작업 큐 보드 — todo / 진행 / 완료 3컬럼.
+ * 추가는 todo 로만 들어가고, 진행으로 옮길 때(드래그 또는 ▶) 실행된다.
+ * claude 출력은 터미널 탭에 그대로 있으므로 여기서 다시 보여주지 않는다.
  */
 class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
@@ -59,12 +59,8 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         border = JBUI.Borders.empty(3, 6)
     }
 
-    private val logArea = JBTextArea().apply {
-        isEditable = false
-        lineWrap = true
-        font = JBFont.small()
-    }
-
+    /** 상태줄에 띄울 마지막 진행 메시지 — 전체는 툴바 '로그' 로 본다 */
+    private var lastLog = ""
 
     private var cliInfo = "claude 확인 중…"
 
@@ -82,7 +78,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         queue.addLogListener(logListener)
 
         refreshCliStatus()
-        queue.recentLog().forEach { appendLog(it) }
+        queue.recentLog().lastOrNull()?.let { appendLog(it) }
         refresh()
     }
 
@@ -98,25 +94,18 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 { queue.todos().isNotEmpty() }) {
                 chooseTerminal { tab -> queue.runAllTodos(tab) }
             })
-            add(action("todo 로 되돌리기", "진행 대기 항목을 todo 로", AllIcons.Actions.Rollback,
-                { selected()?.status == TaskStatus.QUEUED }) {
-                selected()?.let { queue.demote(it.id) }
-            })
             addSeparator()
-            add(action("실행 중단", "실행 중 작업 취소", AllIcons.Actions.Suspend,
+            add(action("터미널 보기", "이 작업이 도는 claude 탭으로 이동", AllIcons.Actions.MoveTo2,
+                { selected()?.terminalTab?.isNotEmpty() == true }) {
+                selected()?.let { focusTerminal(it) }
+            })
+            add(action("실행 중단","실행 중 작업 취소", AllIcons.Actions.Suspend,
                 { queue.runningTask() != null }) {
                 queue.cancelRunning()
             })
             add(action("재시도", "실패·취소 항목 다시 실행", AllIcons.Actions.Restart,
                 { selected()?.status?.isFinished == true }) {
                 selected()?.let { queue.retry(it.id) }
-            })
-            addSeparator()
-            add(action("위로", "순서 올리기", AllIcons.Actions.MoveUp, { selected() != null }) {
-                selected()?.let { queue.move(it.id, -1) }
-            })
-            add(action("아래로", "순서 내리기", AllIcons.Actions.MoveDown, { selected() != null }) {
-                selected()?.let { queue.move(it.id, 1) }
             })
             addSeparator()
             add(PauseResumeAction())
@@ -128,6 +117,9 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             add(action("삭제", "선택 항목 제거", AllIcons.General.Remove, { selected() != null }) {
                 selected()?.let { queue.remove(it.id) }
             })
+            addSeparator()
+            add(action("로그", "플러그인 진행 로그 (claude 출력은 터미널 탭에 있다)",
+                AllIcons.Debugger.Console, { true }) { showLog() })
         }
 
         val toolbar: ActionToolbar = ActionManager.getInstance()
@@ -145,29 +137,13 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
     }
 
-    private fun buildBody(): OnePixelSplitter {
-        val board = OnePixelSplitter(false, 0.34f).apply {
-            firstComponent = todoColumn
-            secondComponent = OnePixelSplitter(false, 0.5f).apply {
-                firstComponent = activeColumn
-                secondComponent = doneColumn
-            }
+    /** 보드가 화면을 다 쓴다 — 실제 출력은 claude 터미널 탭에 있으므로 로그 패널을 두지 않는다 */
+    private fun buildBody(): OnePixelSplitter = OnePixelSplitter(false, 0.34f).apply {
+        firstComponent = todoColumn
+        secondComponent = OnePixelSplitter(false, 0.5f).apply {
+            firstComponent = activeColumn
+            secondComponent = doneColumn
         }
-
-        val logPanel = JPanel(BorderLayout()).apply {
-            add(sectionLabel("실행 로그"), BorderLayout.NORTH)
-            add(JBScrollPane(logArea), BorderLayout.CENTER)
-        }
-
-        return OnePixelSplitter(false, 0.62f).apply {
-            firstComponent = board
-            secondComponent = logPanel
-        }
-    }
-
-    private fun sectionLabel(text: String) = JBLabel(text, SwingConstants.LEFT).apply {
-        font = JBFont.smallOrNewUiMedium().asBold()
-        border = JBUI.Borders.empty(4, 6)
     }
 
     /** 한 컬럼에서 고르면 나머지 선택을 지운다 — 선택은 항상 하나 */
@@ -179,7 +155,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                     columns.filter { it !== column }.forEach { it.clearSelection() }
                 }
             }
-            // 더블클릭 = 컬럼 간 이동 (todo→진행, 진행→todo)
+            // 더블클릭 = 컬럼 간 이동 (드래그앤드롭과 같은 동작, 키보드/빠른 조작용)
             column.list.addMouseListener(object : MouseAdapter() {
                 override fun mouseClicked(e: MouseEvent) {
                     if (e.clickCount != 2) return
@@ -187,11 +163,24 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                     when (task.status) {
                         TaskStatus.TODO -> chooseTerminal { tab -> queue.promote(task.id, tab) }
                         TaskStatus.QUEUED -> queue.demote(task.id)
+                        // 실행 중이면 그 claude 터미널로 보내준다 — 개입하려면 그게 필요하다
+                        TaskStatus.RUNNING -> focusTerminal(task)
                         else -> Unit
                     }
                 }
             })
         }
+
+        TaskDragAndDrop.install(columns, queue::reorderGroup, ::dropTo, fixed = setOf(doneColumn))
+    }
+
+    /** 다른 컬럼에 떨어뜨렸을 때의 상태 이동 */
+    private fun dropTo(task: TaskEntry, target: QueueColumn) = when {
+        target === todoColumn && task.status == TaskStatus.QUEUED -> queue.demote(task.id)
+        target === activeColumn && task.status == TaskStatus.TODO ->
+            chooseTerminal { tab -> queue.promote(task.id, tab) }
+        // 완료 컬럼으로 끌어오거나, 실행 중 항목을 옮기는 건 허용하지 않는다
+        else -> Unit
     }
 
     // --- 동작 ---
@@ -205,6 +194,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         promptField.text = ""
     }
 
+
+    private fun focusTerminal(task: TaskEntry) {
+        if (!TerminalTabFocuser.focus(project, task.terminalTab)) {
+            appendLog("· 터미널 탭을 찾을 수 없다: ${task.terminalTab.ifEmpty { "(없음)" }}")
+        }
+    }
 
     private fun cwd(): String =
         project.basePath ?: File(System.getProperty("user.home")).absolutePath
@@ -279,8 +274,8 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             queue.runningTask()?.let { append("  ·  실행: ${it.shortLabel()}") }
             append("  ·  ").append(project.basePath?.let(::File)?.name ?: "-")
             append("  ·  ").append(cliInfo)
+            if (lastLog.isNotEmpty()) append("  ·  ").append(lastLog.take(80))
         }
-
     }
 
 
@@ -291,9 +286,29 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
      */
     private fun appendLog(line: String) {
         val isJson = line.trimStart().startsWith("{")
-        val text = if (isJson) LogFormatter.format(line) ?: return else line
-        logArea.append(text + "\n")
-        logArea.caretPosition = logArea.document.length
+        lastLog = if (isJson) LogFormatter.format(line) ?: return else line
+        refresh()
+    }
+
+    /** 문제 생겼을 때만 열어 보는 창 — 평소엔 화면을 차지하지 않는다 */
+    private fun showLog() {
+        val lines = queue.recentLog().mapNotNull { line ->
+            if (line.trimStart().startsWith("{")) LogFormatter.format(line) else line
+        }
+        val area = JBTextArea(lines.joinToString("\n").ifEmpty { "아직 실행 로그가 없다" }).apply {
+            isEditable = false
+            font = JBFont.small()
+            caretPosition = document.length
+        }
+        JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(JBScrollPane(area), area)
+            .setTitle("실행 로그")
+            .setResizable(true)
+            .setMovable(true)
+            .setRequestFocus(true)
+            .setMinSize(JBUI.size(560, 320))
+            .createPopup()
+            .showInBestPositionFor(DataManager.getInstance().getDataContext(this))
     }
 
     private fun ui(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)

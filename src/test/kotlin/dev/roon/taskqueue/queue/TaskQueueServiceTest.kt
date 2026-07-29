@@ -229,6 +229,28 @@ class TaskQueueServiceTest {
     }
 
     @Test
+    fun `컬럼 순서 재배치 - 그 그룹의 슬롯만 채운다`() {
+        queue.pause()
+        val a = queue.addTodo("A", "/tmp")
+        val q = enqueueAndRun("Q", "/tmp")   // 사이에 낀 다른 상태
+        val b = queue.addTodo("B", "/tmp")
+
+        queue.reorderGroup(listOf(b.id, a.id))
+
+        // todo 두 개만 자리를 바꾸고, 가운데 QUEUED 는 그대로
+        assertEquals(listOf(b.id, q.id, a.id), queue.tasks.map { it.id })
+    }
+
+    @Test
+    fun `모르는 id 가 섞이면 재배치하지 않는다`() {
+        queue.pause()
+        val a = queue.addTodo("A", "/tmp")
+        val b = queue.addTodo("B", "/tmp")
+        queue.reorderGroup(listOf(b.id, "없는-id"))
+        assertEquals(listOf(a.id, b.id), queue.tasks.map { it.id })
+    }
+
+    @Test
     fun `완료 항목 정리`() {
         enqueueAndRun("작업1", "/tmp")
         fake.complete()

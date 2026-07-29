@@ -11,6 +11,10 @@ import java.awt.Component
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import javax.swing.BorderFactory
 import javax.swing.JLabel
 import javax.swing.JList
@@ -70,7 +74,7 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
         return this
     }
 
-    /** 상태에 따라 다른 정보를 보여준다 — 완료는 비용/시간, 실패는 이유 */
+    /** 상태에 따라 다른 정보를 보여준다 — 완료는 끝난 시각·소요·비용, 실패는 이유 */
     private fun metaOf(task: TaskEntry): String {
         val parts = mutableListOf<String>()
 
@@ -84,21 +88,39 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
             }
 
             TaskStatus.DONE -> {
-                task.startedAt?.let { s ->
-                    task.finishedAt?.let { f -> parts += "%.1fs".format((f - s) / 1000.0) }
-                }
+                task.finishedAt?.let { parts += clock(it) }
+                elapsed(task)?.let { parts += it }
                 task.costUsd?.let { parts += "$%.3f".format(it) }
             }
 
             TaskStatus.FAILED, TaskStatus.CANCELED -> {
-                task.errorMessage?.let { parts += it.take(60) }
+                task.finishedAt?.let { parts += clock(it) }
+                task.errorMessage?.let { parts += it.take(50) }
             }
 
             TaskStatus.TODO, TaskStatus.QUEUED -> Unit
         }
 
+        // 어느 claude 탭에서 돌았는지 — 여러 탭을 굴리면 이게 없으면 못 찾는다
+        if (task.status != TaskStatus.TODO && task.terminalTab.isNotEmpty()) {
+            parts += "⌗ ${task.terminalTab}"
+        }
         if (task.attempts > 1) parts += "시도 ${task.attempts}회"
         return parts.joinToString("  ·  ")
+    }
+
+    /** 오늘 것은 시각만, 어제 이전은 날짜까지 */
+    private fun clock(epochMs: Long): String {
+        val at = Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault())
+        val fmt = if (at.toLocalDate() == LocalDate.now(ZoneId.systemDefault())) TIME else DATE_TIME
+        return at.format(fmt)
+    }
+
+    private fun elapsed(task: TaskEntry): String? {
+        val s = task.startedAt ?: return null
+        val f = task.finishedAt ?: return null
+        val sec = (f - s) / 1000.0
+        return if (sec < 60) "%.1fs".format(sec) else "%d분 %ds".format((sec / 60).toInt(), (sec % 60).toInt())
     }
 
     private fun colorOf(task: TaskEntry): JBColor = when (task.status) {
@@ -147,5 +169,8 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
         private val RUNNING = JBColor(0x1F8B4C, 0x4CB782)
         private val DONE = JBColor(0x6E7781, 0x8B949E)
         private val FAILED = JBColor(0xD1383D, 0xE5534B)
+
+        private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+        private val DATE_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("M/d HH:mm")
     }
 }

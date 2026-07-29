@@ -6,6 +6,7 @@
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Task Queue"
                     anchor="bottom"
+                    icon="dev.roon.taskqueue.ui.TaskQueueIcons.ToolWindow"
                     factoryClass="dev.roon.taskqueue.ui.TaskQueueToolWindowFactory"/>
         <applicationService serviceImplementation="dev.roon.taskqueue.cli.ClaudeCli"/>
         <applicationService serviceImplementation="dev.roon.taskqueue.session.SessionWatcher"/>

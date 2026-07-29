@@ -52,5 +52,7 @@ class QueueColumn(
 
     fun clearSelection() = list.clearSelection()
 
+    fun tasks(): List<TaskEntry> = (0 until model.size()).map { model.getElementAt(it) }
+
     val selected: TaskEntry? get() = list.selectedValue
 }

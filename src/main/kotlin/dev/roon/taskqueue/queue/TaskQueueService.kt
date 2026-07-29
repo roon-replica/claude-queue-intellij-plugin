@@ -172,6 +172,24 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         notifyChanged()
     }
 
+    /**
+     * 한 컬럼의 순서를 통째로 다시 놓는다 (드래그앤드롭용).
+     * 해당 작업들이 원래 차지하던 전역 슬롯에 `orderedIds` 순서로 채워 넣는다 —
+     * 다른 상태의 작업 위치는 건드리지 않는다.
+     */
+    fun reorderGroup(orderedIds: List<String>) {
+        val slots = state.tasks.withIndex()
+            .filter { it.value.id in orderedIds }
+            .map { it.index }
+        if (slots.size != orderedIds.size) return
+
+        val byId = orderedIds.mapNotNull { id -> find(id) }
+        if (byId.size != orderedIds.size) return
+
+        slots.forEachIndexed { i, slot -> state.tasks[slot] = byId[i] }
+        notifyChanged()
+    }
+
     /** 실패/취소 항목을 다시 대기줄에 올린다 (세션 ID 유지 → 같은 세션에 이어붙음) */
     fun retry(id: String) {
         val task = find(id) ?: return
