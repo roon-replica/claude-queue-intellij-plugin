@@ -3,17 +3,16 @@ package dev.roon.taskqueue.queue
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
-import com.intellij.terminal.ui.TerminalWidget
 import com.intellij.util.concurrency.AppExecutorUtil
 import dev.roon.taskqueue.cli.ClaudeCli
 import dev.roon.taskqueue.session.SessionPaths
 import dev.roon.taskqueue.session.SessionState
 import dev.roon.taskqueue.session.SessionWatcher
+import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * IntelliJ 터미널에서 **대화형** claude 를 띄운다. 실제 Claude Code 화면이 보이고 개입도 된다.
@@ -52,10 +51,24 @@ class TerminalTaskLauncher(
         ApplicationManager.getApplication().invokeLater {
             if (running.canceled) return@invokeLater
             try {
-                val widget = resolveWidget(project, task)
+                val existing = findExistingTab(project, task.terminalTab)
+                val widget = existing ?: createTab(project, task)
+
+                // 이미 claude 가 돌고 있는 탭이면 셸 명령이 아니라 프롬프트를 넣어야 한다
+                val claudeRunning = existing != null && hasRunningCommand(existing)
+                val payload = if (claudeRunning) singleLine(task.prompt) else command
+
+                if (claudeRunning && payload != task.prompt) {
+                    onLine("· 여러 줄 프롬프트를 한 줄로 합쳐 전송 (대화형 입력 제약)")
+                }
+
                 widget.requestFocus()
-                widget.sendCommandToExecute(command)
-                onLine("$ $command")
+                // 연결될 때까지 기다렸다 쓴다 — sendCommandToExecute 는 셸 준비 전이면 유실된다
+                widget.executeWithTtyConnector { connector ->
+                    connector.write(payload + "\r")
+                }
+                onLine(if (claudeRunning) "› ${singleLine(task.prompt).take(120)}" else "$ $command")
+
                 bindSession(task, resumeId, launchedAt, running, onState, onDone, onLine)
             } catch (e: Exception) {
                 onDone(TaskResult(-1, SessionState.UNKNOWN, null, "터미널 실행 실패: ${e.message}"))
@@ -65,21 +78,29 @@ class TerminalTaskLauncher(
         return running
     }
 
-    /** 지정 탭이 있으면 재사용, 없으면 새로 만든다. 셸이 뜬 뒤 명령을 보내야 유실되지 않는다 */
-    private fun resolveWidget(project: Project, task: TaskEntry): TerminalWidget {
-        val manager = TerminalToolWindowManager.getInstance(project)
-
-        if (task.terminalTab.isNotEmpty()) {
-            manager.terminalWidgets.firstOrNull { titleOf(it) == task.terminalTab }?.let { return it }
-        }
-
-        val tabName = task.terminalTab.ifEmpty { task.lane.ifEmpty { task.shortLabel().take(20) } }
-        // deferSessionStartUntilUiShown=false — true 면 셸이 뜨기 전에 보낸 명령이 유실된다
-        return manager.createShellWidget(task.cwd, tabName, true, false)
+    /** 이름이 일치하는 열린 탭 */
+    private fun findExistingTab(project: Project, tabName: String): ShellTerminalWidget? {
+        if (tabName.isEmpty()) return null
+        return TerminalToolWindowManager.getInstance(project).widgets
+            .filterIsInstance<ShellTerminalWidget>()
+            .firstOrNull { titleOf(it) == tabName }
     }
 
-    private fun titleOf(widget: TerminalWidget): String =
-        widget.terminalTitle.buildTitle()
+    private fun createTab(project: Project, task: TaskEntry): ShellTerminalWidget {
+        val tabName = task.terminalTab.ifEmpty { task.lane.ifEmpty { task.shortLabel().take(20) } }
+        return TerminalToolWindowManager.getInstance(project)
+            .createLocalShellWidget(task.cwd, tabName, true)
+    }
+
+    private fun hasRunningCommand(widget: ShellTerminalWidget): Boolean =
+        runCatching { widget.hasRunningCommands() }.getOrDefault(false)
+
+    private fun titleOf(widget: ShellTerminalWidget): String =
+        runCatching { widget.terminalTitle.buildTitle() }.getOrDefault("")
+
+    /** 대화형 입력은 개행이 곧 전송이라 한 줄로 만든다 */
+    private fun singleLine(text: String): String =
+        text.replace(Regex("\\s*\\n\\s*"), " ").trim()
 
     /**
      * 판정 대상 jsonl 을 찾아 붙는다.
