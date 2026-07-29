@@ -61,6 +61,9 @@ class TaskEntry() {
     /** 실행 방식 — 터미널(대화형, 개입 가능) vs 헤드리스(백그라운드) */
     var execMode: ExecMode = ExecMode.TERMINAL
 
+    /** 실행할 터미널 탭 이름. 비면 새 탭을 만든다 */
+    var terminalTab: String = ""
+
     var createdAt: Long = 0
     var startedAt: Long? = null
     var finishedAt: Long? = null

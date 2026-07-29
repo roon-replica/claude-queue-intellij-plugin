@@ -138,10 +138,12 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         cwd: String,
         lane: String = "",
         execMode: ExecMode = ExecMode.TERMINAL,
+        terminalTab: String = "",
     ): TaskEntry {
         val task = TaskEntry(UUID.randomUUID().toString(), prompt, cwd, clock())
         task.lane = lane.trim()
         task.execMode = execMode
+        task.terminalTab = terminalTab.trim()
         state.tasks += task
         // 실행 전에도 레인이 목록에 보여야 한다 — 세션 ID 는 첫 실행 때 채운다
         if (task.lane.isNotEmpty()) registerLane(cwd, task.lane)

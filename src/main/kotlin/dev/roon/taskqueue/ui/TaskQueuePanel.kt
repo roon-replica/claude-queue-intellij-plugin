@@ -33,6 +33,7 @@ import dev.roon.taskqueue.queue.ExecMode
 import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
+import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.event.MouseAdapter
@@ -63,9 +64,10 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         toolTipText = "같은 레인의 작업은 한 대화를 이어 쓴다 (앞 작업을 기억)"
     }
 
-    /** 실행 방식 — 터미널이면 실제 Claude Code 화면에서 돌고 개입할 수 있다 */
-    private val modeCombo = ComboBox(arrayOf(MODE_TERMINAL, MODE_HEADLESS)).apply {
-        toolTipText = "터미널: 화면 보이고 권한 승인·개입 가능 / 백그라운드: 화면 없이 무인 실행"
+    /** 실행할 터미널 탭 — 열린 탭을 고르거나 새로 만든다 */
+    private val terminalCombo = ComboBox<String>().apply {
+        addItem(NEW_TERMINAL)
+        toolTipText = "작업을 실행할 터미널 탭. 열린 탭을 고르면 그 탭에서 실행한다"
     }
 
     private val todoColumn = QueueColumn("TODO", "여기에 작업을 적어둔다")
@@ -195,8 +197,8 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             add(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
                 add(JBLabel("레인").apply { font = JBFont.small() })
                 add(laneCombo)
-                add(JBLabel("실행").apply { font = JBFont.small() })
-                add(modeCombo)
+                add(JBLabel("터미널").apply { font = JBFont.small() })
+                add(terminalCombo)
             }, BorderLayout.EAST)
         }
 
@@ -270,12 +272,31 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun addTodo() {
         val prompt = promptField.text?.trim().orEmpty()
         if (prompt.isEmpty()) return
-        queue.addTodo(prompt, cwd(), currentLane(), currentMode())
+        queue.addTodo(prompt, cwd(), currentLane(), ExecMode.TERMINAL, currentTerminal())
         promptField.text = ""
     }
 
-    private fun currentMode(): ExecMode =
-        if (modeCombo.selectedItem == MODE_HEADLESS) ExecMode.HEADLESS else ExecMode.TERMINAL
+    /** 선택된 터미널 탭 이름. 빈 문자열이면 새 탭 */
+    private fun currentTerminal(): String =
+        (terminalCombo.selectedItem as? String)?.takeIf { it != NEW_TERMINAL }.orEmpty()
+
+    /** 열린 터미널 탭 목록을 콤보에 반영 */
+    private fun refreshTerminals() {
+        val open = runCatching {
+            TerminalToolWindowManager.getInstance(project).terminalWidgets
+                .map { it.terminalTitle.buildTitle() }
+                .filter { it.isNotBlank() }
+                .distinct()
+        }.getOrDefault(emptyList())
+
+        val current = terminalCombo.selectedItem as? String
+        val items = listOf(NEW_TERMINAL) + open
+        if ((0 until terminalCombo.itemCount).map { terminalCombo.getItemAt(it) } == items) return
+
+        terminalCombo.removeAllItems()
+        items.forEach { terminalCombo.addItem(it) }
+        terminalCombo.selectedItem = if (current in items) current else NEW_TERMINAL
+    }
 
     private fun cwd(): String =
         project.basePath ?: File(System.getProperty("user.home")).absolutePath
@@ -340,6 +361,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private fun refresh() {
         refreshLanes()
+        refreshTerminals()
         val all = queue.tasks
         todoColumn.setTasks(all.filter { it.status == TaskStatus.TODO })
         activeColumn.setTasks(all.filter { it.status.isActive })
@@ -429,8 +451,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private companion object {
         const val NEW_SESSION = "새 세션"
-        const val MODE_TERMINAL = "터미널"
-        const val MODE_HEADLESS = "백그라운드"
+        const val NEW_TERMINAL = "새 터미널"
     }
 
     /** 조건부 활성 액션을 짧게 만드는 헬퍼 */
