@@ -16,6 +16,8 @@
     ]]></description>
 
     <extensions defaultExtensionNs="com.intellij">
+        <!-- 알림 설정 화면에서 유저가 끄거나 OS 알림으로 바꿀 수 있게 그룹으로 등록 -->
+        <notificationGroup id="Task Queue" displayType="BALLOON"/>
         <toolWindow id="Task Queue"
                     anchor="bottom"
                     icon="dev.roon.taskqueue.ui.TaskQueueIcons.ToolWindow"

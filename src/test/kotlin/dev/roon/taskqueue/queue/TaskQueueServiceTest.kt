@@ -1,5 +1,6 @@
 package dev.roon.taskqueue.queue
 
+import dev.roon.taskqueue.notify.TaskNotifications
 import dev.roon.taskqueue.session.SessionState
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -40,6 +41,22 @@ class TaskQueueServiceTest {
             val done = pending ?: error("실행 중인 작업 없음")
             pending = null
             done(TaskResult(exitCode, state, 0.01, error))
+        }
+    }
+
+    /** 알림 호출을 기록한다 — 플랫폼 없이 검증하려고 */
+    private class FakeNotifier : TaskNotifications {
+        val finished = mutableListOf<TaskStatus>()
+
+        /** (성공, 실패) 쌍 */
+        val summaries = mutableListOf<Pair<Int, Int>>()
+
+        override fun taskFinished(task: TaskEntry) {
+            finished += task.status
+        }
+
+        override fun queueDrained(done: Int, failed: Int, cwd: String) {
+            summaries += done to failed
         }
     }
 
@@ -282,6 +299,54 @@ class TaskQueueServiceTest {
         val t = queue.addTodo("원래 문장", "/tmp")
         assertFalse(queue.updatePrompt(t.id, "   "))
         assertEquals("원래 문장", queue.find(t.id)!!.prompt)
+    }
+
+    @Test
+    fun `작업이 끝나면 알림이 간다`() {
+        val notes = FakeNotifier()
+        queue.notifier = notes
+        enqueueAndRun("작업", "/tmp")
+        fake.complete()
+        assertEquals(listOf(TaskStatus.DONE), notes.finished)
+    }
+
+    @Test
+    fun `사용자 취소는 알리지 않는다`() {
+        val notes = FakeNotifier()
+        queue.notifier = notes
+        enqueueAndRun("작업", "/tmp")
+        queue.cancelRunning()
+        // 본인이 누른 취소를 알림으로 되돌려줄 이유가 없다
+        assertEquals(emptyList(), notes.finished)
+        assertEquals(emptyList(), notes.summaries)
+    }
+
+    @Test
+    fun `큐가 다 비면 요약 알림이 한 번 간다`() {
+        val notes = FakeNotifier()
+        queue.notifier = notes
+        enqueueAndRun("A", "/tmp")
+        enqueueAndRun("B", "/tmp")
+
+        fake.complete(exitCode = 0)   // A 성공 → B 시작 (아직 큐가 안 비었다)
+        assertEquals(0, notes.summaries.size)
+
+        fake.complete(exitCode = 1)   // B 실패 → 큐 소진
+        assertEquals(listOf(1 to 1), notes.summaries)
+    }
+
+    @Test
+    fun `이미 요약에 든 항목은 다시 세지 않는다`() {
+        val notes = FakeNotifier()
+        queue.notifier = notes
+        enqueueAndRun("A", "/tmp")
+        fake.complete()
+        assertEquals(listOf(1 to 0), notes.summaries)
+
+        enqueueAndRun("B", "/tmp")
+        fake.complete()
+        // A 는 이미 알렸으므로 B 한 건만
+        assertEquals(listOf(1 to 0, 1 to 0), notes.summaries)
     }
 
     @Test

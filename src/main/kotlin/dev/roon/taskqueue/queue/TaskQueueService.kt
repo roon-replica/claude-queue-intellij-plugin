@@ -6,6 +6,8 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
 import com.intellij.util.xmlb.annotations.XCollection
+import dev.roon.taskqueue.notify.TaskNotifications
+import dev.roon.taskqueue.notify.TaskNotifier
 import dev.roon.taskqueue.session.SessionState
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -42,6 +44,9 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         ExecMode.TERMINAL -> terminalLauncher ?: launcher
         ExecMode.HEADLESS -> launcher
     }
+
+    /** 알림 창구 (테스트에서 교체) */
+    var notifier: TaskNotifications = TaskNotifier
 
     /** 시간 주입 — 테스트 결정성 확보 */
     var clock: () -> Long = { System.currentTimeMillis() }
@@ -297,7 +302,22 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
             exitCode = result.exitCode,
             errorMessage = result.errorMessage ?: if (failed) "exit ${result.exitCode}" else null,
         )
+        notifier.taskFinished(task)
         maybeStartNext()
+        // 다음 작업이 시작되지 않았으면 큐가 다 비었다는 뜻 — 자리를 비운 사람에게 알린다
+        if (runningId == null) notifyQueueDrained(task.cwd)
+    }
+
+    /** 이번 회차에 처리된 결과만 요약한다 — 이전에 이미 알린 건은 제외 */
+    private fun notifyQueueDrained(cwd: String) {
+        val finished = state.tasks.filter { it.status.isFinished && !it.notified }
+        if (finished.isEmpty()) return
+        finished.forEach { it.notified = true }
+        notifier.queueDrained(
+            done = finished.count { it.status == TaskStatus.DONE },
+            failed = finished.count { it.status == TaskStatus.FAILED },
+            cwd = cwd,
+        )
     }
 
     private fun finish(task: TaskEntry, status: TaskStatus, exitCode: Int?, errorMessage: String?) {

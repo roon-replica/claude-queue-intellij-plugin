@@ -77,6 +77,9 @@ class TaskEntry() {
     /** 재시도 횟수 (최초 실행 포함) */
     var attempts: Int = 0
 
+    /** 큐 소진 요약 알림에 이미 포함됐는지 — 같은 건을 두 번 세지 않는다 */
+    var notified: Boolean = false
+
     /** 종료 시점의 jsonl 판정 결과 — 프로세스 종료와 별개로 기록 */
     var finalState: SessionState = SessionState.UNKNOWN
 
