@@ -2,7 +2,7 @@ package dev.roon.taskqueue.terminal
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
-import org.jetbrains.plugins.terminal.ShellTerminalWidget
+import com.intellij.terminal.ui.TerminalWidget
 
 /**
  * 우리가 띄운 터미널 탭 ↔ 그 탭에서 도는 claude 세션 ID 매핑.
@@ -20,11 +20,11 @@ class TerminalSessionRegistry {
 
     data class Tab(
         val label: String,
-        val widget: ShellTerminalWidget,
+        val widget: TerminalWidget,
         val sessionId: String,
     )
 
-    fun register(label: String, widget: ShellTerminalWidget, sessionId: String) = synchronized(tabs) {
+    fun register(label: String, widget: TerminalWidget, sessionId: String) = synchronized(tabs) {
         tabs.removeAll { it.label == label }
         tabs += Tab(label, widget, sessionId)
     }
@@ -46,9 +46,9 @@ class TerminalSessionRegistry {
         return "$base ($i)"
     }
 
-    /** 탭이 닫히면 tty 세션이 끝난다 */
-    private fun isAlive(widget: ShellTerminalWidget): Boolean =
-        runCatching { widget.isSessionRunning }.getOrDefault(false)
+    /** 탭이 닫히면 tty 연결이 끊긴다 */
+    private fun isAlive(widget: TerminalWidget): Boolean =
+        runCatching { widget.ttyConnector?.isConnected == true }.getOrDefault(false)
 
     companion object {
         fun getInstance(): TerminalSessionRegistry = service()

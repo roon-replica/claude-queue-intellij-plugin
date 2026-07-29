@@ -8,7 +8,6 @@ import dev.roon.taskqueue.cli.ClaudeCli
 import dev.roon.taskqueue.hook.StopHookWatcher
 import dev.roon.taskqueue.session.SessionState
 import dev.roon.taskqueue.terminal.TerminalSessionRegistry
-import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 import java.io.File
 import java.util.UUID
@@ -18,9 +17,12 @@ import java.util.concurrent.TimeUnit
 /**
  * IntelliJ 터미널에서 **대화형** claude 를 띄운다. 실제 Claude Code 화면이 보이고 개입도 된다.
  *
+ * 새 탭은 **터미널의 셸 자체를 claude 로 지정해** 시작한다(`shellCommand`).
+ * 셸에 명령을 타이핑하는 방식은 초기화 타이밍에 따라 유실돼 실패했다(실측) —
+ * argv 로 직접 넘기면 인용·타이핑 문제가 아예 없다.
+ *
  * 완료 판정은 **Stop 훅**으로 한다. 대화형 세션은 열려 있는 동안 전사(jsonl)를 쓰지 않아
- * 파일 기반 판정이 불가하다(실측). `--settings` 로 심은 Stop 훅은 전역 훅과 병합되며,
- * 턴이 끝날 때 세션 ID 가 담긴 JSON 을 남긴다.
+ * 파일 기반 판정이 불가하다(실측).
  */
 class TerminalTaskLauncher(
     private val cliProvider: () -> ClaudeCli = { ClaudeCli.getInstance() },
@@ -49,7 +51,6 @@ class TerminalTaskLauncher(
                 // 세션 ID 는 작업이 아니라 탭에 딸린 값 — 같은 탭이면 그 탭의 claude 가 처리한다
                 val known = task.terminalTab.takeIf { it.isNotEmpty() }?.let { registry.find(it) }
 
-                // 우리가 띄우지 않은 탭에는 훅을 심을 수 없어 완료를 알 수 없다
                 if (task.terminalTab.isNotEmpty() && known == null) {
                     onDone(
                         TaskResult(
@@ -60,16 +61,9 @@ class TerminalTaskLauncher(
                     return@invokeLater
                 }
 
-                val reuse = known != null
                 val sessionId = known?.sessionId ?: UUID.randomUUID().toString()
                 task.sessionId = sessionId
                 task.hookSessionId = sessionId
-
-                val payload =
-                    if (reuse) singleLine(task.prompt)
-                    else buildCommand(exe, sessionId, hooks.hookCommand(sessionId), writePromptFile(task))
-
-                val widget = known?.widget ?: createTab(project, task, registry, sessionId)
                 val sentAt = System.currentTimeMillis()
 
                 // 전송 전에 구독해야 빠른 응답의 Stop 을 놓치지 않는다
@@ -90,20 +84,19 @@ class TerminalTaskLauncher(
                     )
                 }
 
-                widget.requestFocus()
-                if (reuse) {
+                if (known != null) {
                     // 이미 claude 가 도는 탭 → 그 입력창에 프롬프트를 넣는다
-                    widget.executeWithTtyConnector { connector ->
-                        runCatching { connector.write(payload + "\r") }
+                    val text = singleLine(task.prompt)
+                    known.widget.requestFocus()
+                    known.widget.ttyConnectorAccessor.executeWithTtyConnector { connector ->
+                        runCatching { connector.write(text + "\r") }
                             .onFailure { onLine("· 전송 실패: ${it.message}") }
                     }
-                    onLine("› ${singleLine(task.prompt).take(120)}")
+                    onLine("› $text".take(140))
                 } else {
-                    // 새 셸 → executeCommand 가 프롬프트 준비를 기다렸다 실행한다
-                    // (TTY 직접 쓰기는 셸 초기화 중이면 유실된다)
-                    onLine("$ $payload")
-                    runCatching { widget.executeCommand(payload) }
-                        .onFailure { onLine("· 명령 실행 실패: ${it.message}") }
+                    val argv = buildArgv(exe, sessionId, hooks.hookCommand(sessionId), task.prompt)
+                    val label = openClaudeTab(project, task, registry, sessionId, argv)
+                    onLine("$ claude --session-id ${sessionId.take(8)}…  (탭: $label)")
                 }
 
                 onState(SessionState.WORKING)
@@ -116,57 +109,43 @@ class TerminalTaskLauncher(
         return running
     }
 
-    // --- 터미널 ---
-
-    /** 새 탭을 만들고 레지스트리에 등록한다 — 이후 작업이 이 탭을 골라 이어 쓸 수 있게 */
-    private fun createTab(
+    /**
+     * 터미널을 열되 셸 대신 claude 를 직접 실행한다.
+     * `deferSessionStartUntilUiShown=true` 로 만들고 시작 전에 셸 명령을 바꿔치기한다.
+     */
+    private fun openClaudeTab(
         project: Project,
         task: TaskEntry,
         registry: TerminalSessionRegistry,
         sessionId: String,
-    ): ShellTerminalWidget {
+        argv: List<String>,
+    ): String {
         val label = registry.uniqueLabel(task.shortLabel().take(20).ifEmpty { "claude" })
         val widget = TerminalToolWindowManager.getInstance(project)
-            .createLocalShellWidget(task.cwd, label, true)
+            .createShellWidget(task.cwd, label, true, true)
+        widget.shellCommand = argv
         registry.register(label, widget, sessionId)
         task.terminalTab = label
-        return widget
+        return label
     }
 
     /** 대화형 입력은 개행이 곧 전송이라 한 줄로 만든다 */
     private fun singleLine(text: String): String =
         text.replace(Regex("\\s*\\n\\s*"), " ").trim()
 
-    // --- 명령 조립 ---
-
-    /**
-     * 프롬프트를 파일로 두고 `"$(cat file)"` 로 넘긴다.
-     * 여러 줄·따옴표·백틱이 섞인 프롬프트를 셸이 해석하지 않게 하는 안전한 방법.
-     */
-    private fun writePromptFile(task: TaskEntry): File {
-        val dir = File(System.getProperty("java.io.tmpdir"), "task-queue/prompts")
-        dir.mkdirs()
-        val file = File(dir, "prompt-${task.id}-${task.attempts}.txt")
-        file.writeText(task.prompt)
-        return file
-    }
-
-    private fun buildCommand(exe: File, sessionId: String, hookCommand: String, promptFile: File): String {
+    /** argv 로 직접 넘기므로 셸 인용이 필요 없다 */
+    private fun buildArgv(exe: File, sessionId: String, hookCommand: String, prompt: String): List<String> {
         val settings = """{"hooks":{"Stop":[{"hooks":[{"type":"command","command":${jsonString(hookCommand)}}]}]}}"""
-        return buildString {
-            append(shellQuote(exe.absolutePath))
-            append(" --session-id ").append(sessionId)
-            append(" --settings ").append(shellQuote(settings))
-            append(" \"\$(cat ").append(shellQuote(promptFile.absolutePath)).append(")\"")
-        }
+        return listOf(
+            exe.absolutePath,
+            "--session-id", sessionId,
+            "--settings", settings,
+            prompt,
+        )
     }
 
     private fun jsonString(value: String): String =
         "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
-
-    private fun shellQuote(text: String): String =
-        if (text.none { it.isWhitespace() || it in "'\"$`\\{}" }) text
-        else "'" + text.replace("'", "'\\''") + "'"
 
     private fun findProject(cwd: String): Project? {
         val target = File(cwd).absolutePath

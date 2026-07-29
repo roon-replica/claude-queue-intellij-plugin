@@ -57,13 +57,10 @@ class StopHookWatcher : Disposable {
 
     /**
      * 훅에 넣을 명령. **세션 ID 를 파일명에 써서 고정 경로로 만든다.**
-     * 두 가지 제약을 실측으로 확인했다:
-     * - `$(mktemp …)` 같은 명령 치환은 훅에서 실패할 수 있다
-     * - temp 경로에서 **파일명에 하이픈이 있으면 훅이 실행되지 않는다**
+     * `$(mktemp …)` 같은 명령 치환은 쓰지 않는다 — 세션 ID 가 유일하므로 고정 경로로 충분하다.
      */
     fun hookCommand(sessionId: String): String {
         stopsDir.mkdirs()
-        // 파일명에 하이픈이 있으면 훅이 실행되지 않는다(실측) — UUID 의 하이픈을 제거한다
         val target = File(stopsDir, "stop${sessionId.replace("-", "")}.json").absolutePath
         return "cat > ${shellQuote(target)}"
     }
@@ -90,19 +87,31 @@ class StopHookWatcher : Disposable {
         val files = stopsDir.listFiles { f -> f.isFile && f.name.startsWith("stop") && f.name.endsWith(".json") } ?: return
         for (file in files) {
             val signal = parse(file)
-            file.delete()
-            if (signal == null) continue
-
-            val waiter = waiters.remove(signal.sessionId) ?: continue
-            if (file.lastModified() + CLOCK_SLACK_MS < waiter.since) {
-                // 전송 전에 발생한 신호 — 이전 턴의 잔여물이므로 버린다
-                waiters[signal.sessionId] = waiter
+            if (signal == null) {
+                pruneIfStale(file)
                 continue
             }
+
+            val waiter = waiters[signal.sessionId]
+            if (waiter == null) {
+                // 우리 대기 대상이 아니다 — 남의 파일일 수 있으니 지우지 않고 오래된 것만 정리
+                pruneIfStale(file)
+                continue
+            }
+            if (file.lastModified() + CLOCK_SLACK_MS < waiter.since) {
+                continue // 전송 전 신호 — 이전 턴 잔여물
+            }
+            waiters.remove(signal.sessionId)
+            file.delete()
             runCatching { waiter.onStop(signal) }
                 .onFailure { thisLogger().warn("Stop 처리 실패", it) }
         }
         stopPollingIfIdle()
+    }
+
+    /** 오래 방치된 파일만 정리한다 */
+    private fun pruneIfStale(file: File) {
+        if (System.currentTimeMillis() - file.lastModified() > STALE_MS) file.delete()
     }
 
     private fun parse(file: File): StopSignal? = try {
@@ -137,6 +146,9 @@ class StopHookWatcher : Disposable {
 
         /** 파일 mtime 과 전송 시각의 미세한 역전을 허용 */
         private const val CLOCK_SLACK_MS = 2_000L
+
+        /** 주인 없는 훅 파일을 정리하는 기준 */
+        private const val STALE_MS = 5 * 60_000L
 
         fun getInstance(): StopHookWatcher = service()
     }
