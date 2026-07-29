@@ -5,27 +5,25 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.util.concurrency.AppExecutorUtil
 import dev.roon.taskqueue.cli.ClaudeCli
-import dev.roon.taskqueue.session.SessionPaths
+import dev.roon.taskqueue.hook.StopHookWatcher
 import dev.roon.taskqueue.session.SessionState
-import dev.roon.taskqueue.session.SessionWatcher
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 /**
  * IntelliJ 터미널에서 **대화형** claude 를 띄운다. 실제 Claude Code 화면이 보이고 개입도 된다.
  *
- * 프롬프트는 stdin 으로 밀어넣지 않는다 — CLI 가 위치 인자로 받으므로
- * `claude "<프롬프트>"` 한 번으로 제출된 상태로 시작한다.
- *
- * **세션 ID 를 가정하지 않는다.** 대화형은 우리가 준 `--session-id` 대로 파일을 만들지 않는 경우가
- * 있어(실측), 실행 후 프로젝트 폴더에서 새로 갱신된 jsonl 을 찾아 그 파일로 판정한다.
+ * 완료 판정은 **Stop 훅**으로 한다. 대화형 세션은 열려 있는 동안 전사(jsonl)를 쓰지 않아
+ * 파일 기반 판정이 불가하다(실측). `--settings` 로 심은 Stop 훅은 전역 훅과 병합되며,
+ * 턴이 끝날 때 세션 ID 가 담긴 JSON 을 남긴다.
  */
 class TerminalTaskLauncher(
     private val cliProvider: () -> ClaudeCli = { ClaudeCli.getInstance() },
-    private val watcherProvider: () -> SessionWatcher = { SessionWatcher.getInstance() },
+    private val hookProvider: () -> StopHookWatcher = { StopHookWatcher.getInstance() },
 ) : TaskLauncher {
 
     override fun launch(
@@ -39,47 +37,68 @@ class TerminalTaskLauncher(
         val exe = cliProvider().findExecutable()
             ?: return fail(onDone, "claude CLI 를 찾을 수 없다")
 
-        // 이어가기 대상이 확실한 경우(레인에 이미 파일이 있음)에만 --resume 을 쓴다
-        val resumeId = task.sessionId?.takeIf { SessionPaths.sessionFile(task.cwd, it).isFile }
-        val launchedAt = System.currentTimeMillis()
-
-        val promptFile = writePromptFile(task)
-        val command = buildCommand(exe, resumeId, promptFile)
+        val hooks = hookProvider()
         val running = TerminalRun()
 
         ApplicationManager.getApplication().invokeLater {
             if (running.canceled) return@invokeLater
             try {
-                val allTitles = openTitles(project)
-                onLine("· 열린 탭: ${allTitles.joinToString(", ").ifEmpty { "(없음)" }}")
-
                 val existing = findExistingTab(project, task.terminalTab)
-                onLine(
-                    if (existing != null) "· 기존 탭 사용: ${task.terminalTab}"
-                    else "· 새 탭 생성 (요청=${task.terminalTab.ifEmpty { "새 터미널" }})"
-                )
+                val reuse = existing != null && hasRunningCommand(existing)
+
+                // 이미 도는 세션에는 훅을 심을 수 없다 — 우리가 띄운 세션이어야 판정이 가능하다
+                if (reuse && task.hookSessionId.isEmpty()) {
+                    onDone(
+                        TaskResult(
+                            -1, SessionState.UNKNOWN, null,
+                            "외부 세션이라 완료 판정 불가 — 새 터미널로 실행해야 한다",
+                        )
+                    )
+                    return@invokeLater
+                }
+
+                val sessionId = task.hookSessionId.ifEmpty { UUID.randomUUID().toString() }
+                task.sessionId = sessionId
+                task.hookSessionId = sessionId
+
+                val payload =
+                    if (reuse) singleLine(task.prompt)
+                    else buildCommand(exe, sessionId, hooks.hookCommand(), writePromptFile(task))
+
                 val widget = existing ?: createTab(project, task)
+                val sentAt = System.currentTimeMillis()
 
-                // 이미 claude 가 돌고 있는 탭이면 셸 명령이 아니라 프롬프트를 넣어야 한다
-                val claudeRunning = existing != null && hasRunningCommand(existing)
-                onLine("· 그 탭에서 명령 실행 중: $claudeRunning")
-                val payload = if (claudeRunning) singleLine(task.prompt) else command
-
-                if (claudeRunning && payload != task.prompt) {
-                    onLine("· 여러 줄 프롬프트를 한 줄로 합쳐 전송 (대화형 입력 제약)")
+                // 전송 전에 구독해야 빠른 응답의 Stop 을 놓치지 않는다
+                running.attach(
+                    hooks.awaitStop(sessionId, sentAt) { signal ->
+                        onLine("· Stop 훅 수신 (세션 ${signal.sessionId.take(8)})")
+                        running.stopTimeout()
+                        onState(SessionState.DONE)
+                        onDone(TaskResult(0, SessionState.DONE, null, null))
+                    }
+                )
+                running.armTimeout {
+                    onDone(
+                        TaskResult(
+                            -1, SessionState.UNKNOWN, null,
+                            "완료 신호를 못 받았다 (${TIMEOUT_MIN}분 초과)",
+                        )
+                    )
                 }
 
                 widget.requestFocus()
-                // 연결될 때까지 기다렸다 쓴다 — sendCommandToExecute 는 셸 준비 전이면 유실된다
                 widget.executeWithTtyConnector { connector ->
-                    onLine("· TTY 연결됨 — 전송 (${payload.length}자)")
                     runCatching { connector.write(payload + "\r") }
                         .onFailure { onLine("· 전송 실패: ${it.message}") }
                 }
-                onLine(if (claudeRunning) "› ${singleLine(task.prompt).take(120)}" else "$ $command")
 
-                bindSession(task, resumeId, launchedAt, running, onState, onDone, onLine)
+                onState(SessionState.WORKING)
+                onLine(
+                    if (reuse) "› ${singleLine(task.prompt).take(120)}"
+                    else "$ claude (세션 ${sessionId.take(8)}, Stop 훅 심음)"
+                )
             } catch (e: Exception) {
+                running.cancel()
                 onDone(TaskResult(-1, SessionState.UNKNOWN, null, "터미널 실행 실패: ${e.message}"))
             }
         }
@@ -87,7 +106,8 @@ class TerminalTaskLauncher(
         return running
     }
 
-    /** 이름이 일치하는 열린 탭 */
+    // --- 터미널 ---
+
     private fun findExistingTab(project: Project, tabName: String): ShellTerminalWidget? {
         if (tabName.isEmpty()) return null
         return TerminalToolWindowManager.getInstance(project).widgets
@@ -101,13 +121,6 @@ class TerminalTaskLauncher(
             .createLocalShellWidget(task.cwd, tabName, true)
     }
 
-    private fun openTitles(project: Project): List<String> =
-        runCatching {
-            TerminalToolWindowManager.getInstance(project).widgets
-                .filterIsInstance<ShellTerminalWidget>()
-                .map { titleOf(it) }
-        }.getOrDefault(emptyList())
-
     private fun hasRunningCommand(widget: ShellTerminalWidget): Boolean =
         runCatching { widget.hasRunningCommands() }.getOrDefault(false)
 
@@ -118,87 +131,36 @@ class TerminalTaskLauncher(
     private fun singleLine(text: String): String =
         text.replace(Regex("\\s*\\n\\s*"), " ").trim()
 
-    /**
-     * 판정 대상 jsonl 을 찾아 붙는다.
-     * resume 이면 그 파일, 새 대화면 실행 직후 갱신된 파일을 폴링으로 기다린다.
-     */
-    private fun bindSession(
-        task: TaskEntry,
-        resumeId: String?,
-        launchedAt: Long,
-        running: TerminalRun,
-        onState: (SessionState) -> Unit,
-        onDone: (TaskResult) -> Unit,
-        onLine: (String) -> Unit,
-    ) {
-        if (resumeId != null) {
-            val file = SessionPaths.sessionFile(task.cwd, resumeId)
-            startWatch(task, file, file.length(), running, onState, onDone)
-            return
-        }
-
-        val executor = AppExecutorUtil.getAppScheduledExecutorService()
-        val deadline = launchedAt + BIND_TIMEOUT_MS
-        lateinit var poll: Runnable
-        poll = Runnable {
-            if (running.canceled) return@Runnable
-            val found = SessionPaths.newestSessionFileSince(task.cwd, launchedAt - CLOCK_SLACK_MS)
-            if (found != null) {
-                task.sessionId = SessionPaths.sessionIdOf(found)
-                onLine("· 세션 감지: ${task.sessionId}")
-                startWatch(task, found, 0, running, onState, onDone)
-                return@Runnable
-            }
-            if ((System.currentTimeMillis() - launchedAt) % 5_000 < BIND_POLL_MS) {
-                onLine("· 세션 파일 대기 중… (${SessionPaths.projectDir(task.cwd).absolutePath})")
-            }
-            if (System.currentTimeMillis() > deadline) {
-                onDone(TaskResult(-1, SessionState.UNKNOWN, null, "세션 파일을 찾지 못했다 (터미널 실행 확인 필요)"))
-                return@Runnable
-            }
-            executor.schedule(poll, BIND_POLL_MS, TimeUnit.MILLISECONDS)
-        }
-        executor.schedule(poll, BIND_POLL_MS, TimeUnit.MILLISECONDS)
-    }
-
-    /** 대화형은 프로세스 종료 신호가 없다 — jsonl 판정이 완료 신호다 */
-    private fun startWatch(
-        task: TaskEntry,
-        file: File,
-        fromOffset: Long,
-        running: TerminalRun,
-        onState: (SessionState) -> Unit,
-        onDone: (TaskResult) -> Unit,
-    ) {
-        val watch = watcherProvider().watch(file, fromOffset, stopOnTerminal = false) { state ->
-            onState(state)
-            if (state == SessionState.DONE) onDone(TaskResult(0, state, null, null))
-        }
-        running.attach(watch)
-    }
+    // --- 명령 조립 ---
 
     /**
      * 프롬프트를 파일로 두고 `"$(cat file)"` 로 넘긴다.
      * 여러 줄·따옴표·백틱이 섞인 프롬프트를 셸이 해석하지 않게 하는 안전한 방법.
      */
     private fun writePromptFile(task: TaskEntry): File {
-        val dir = File(System.getProperty("java.io.tmpdir"), "task-queue")
+        val dir = File(System.getProperty("user.home"), ".task-queue/prompts")
         dir.mkdirs()
-        val file = File(dir, "prompt-${task.id}-${task.attempts}-${UUID.randomUUID()}.txt")
+        val file = File(dir, "prompt-${task.id}-${task.attempts}.txt")
         file.writeText(task.prompt)
-        file.deleteOnExit()
         return file
     }
 
-    private fun buildCommand(exe: File, resumeId: String?, promptFile: File): String = buildString {
-        append(shellQuote(exe.absolutePath))
-        if (resumeId != null) append(" --resume ").append(resumeId)
-        append(" \"\$(cat ").append(shellQuote(promptFile.absolutePath)).append(")\"")
+    private fun buildCommand(exe: File, sessionId: String, hookCommand: String, promptFile: File): String {
+        val settings = """{"hooks":{"Stop":[{"hooks":[{"type":"command","command":${jsonString(hookCommand)}}]}]}}"""
+        return buildString {
+            append(shellQuote(exe.absolutePath))
+            append(" --session-id ").append(sessionId)
+            append(" --settings ").append(shellQuote(settings))
+            append(" \"\$(cat ").append(shellQuote(promptFile.absolutePath)).append(")\"")
+        }
     }
 
-    private fun shellQuote(path: String): String =
-        if (path.none { it.isWhitespace() || it in "'\"$`\\" }) path
-        else "'" + path.replace("'", "'\\''") + "'"
+    private fun jsonString(value: String): String =
+        "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+    private fun shellQuote(text: String): String =
+        if (text.none { it.isWhitespace() || it in "'\"$`\\{}" }) text
+        else "'" + text.replace("'", "'\\''") + "'"
 
     private fun findProject(cwd: String): Project? {
         val target = File(cwd).absolutePath
@@ -212,23 +174,41 @@ class TerminalTaskLauncher(
         return NoopRunning
     }
 
-    /** 터미널 세션은 사람이 보는 화면이라 강제 종료하지 않는다 — 감시만 뗀다 */
+    /** 터미널 세션은 사람이 보는 화면이라 강제 종료하지 않는다 — 구독만 뗀다 */
     private class TerminalRun : RunningTask {
         @Volatile
         var canceled = false
             private set
 
         @Volatile
-        private var watch: SessionWatcher.Handle? = null
+        private var registration: StopHookWatcher.Registration? = null
 
-        fun attach(handle: SessionWatcher.Handle) {
-            watch = handle
-            if (canceled) handle.cancel()
+        @Volatile
+        private var timeout: ScheduledFuture<*>? = null
+
+        fun attach(reg: StopHookWatcher.Registration) {
+            registration = reg
+            if (canceled) reg.cancel()
+        }
+
+        fun armTimeout(onTimeout: () -> Unit) {
+            timeout = AppExecutorUtil.getAppScheduledExecutorService().schedule({
+                if (!canceled) {
+                    registration?.cancel()
+                    onTimeout()
+                }
+            }, TIMEOUT_MIN.toLong(), TimeUnit.MINUTES)
+        }
+
+        fun stopTimeout() {
+            timeout?.cancel(false)
+            timeout = null
         }
 
         override fun cancel() {
             canceled = true
-            watch?.cancel()
+            registration?.cancel()
+            stopTimeout()
         }
     }
 
@@ -237,10 +217,6 @@ class TerminalTaskLauncher(
     }
 
     private companion object {
-        const val BIND_POLL_MS = 400L
-        const val BIND_TIMEOUT_MS = 60_000L
-
-        /** 파일 mtime 이 실행 시각보다 살짝 이를 수 있어 여유를 둔다 */
-        const val CLOCK_SLACK_MS = 2_000L
+        const val TIMEOUT_MIN = 30
     }
 }

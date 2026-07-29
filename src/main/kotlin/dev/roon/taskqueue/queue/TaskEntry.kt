@@ -57,6 +57,12 @@ class TaskEntry() {
     /** 실행할 터미널 탭 이름. 비면 새 탭을 만든다 */
     var terminalTab: String = ""
 
+    /**
+     * 우리가 Stop 훅을 심어 띄운 세션 ID. 같은 탭에 이어 보낼 때 이 ID 로 완료 신호를 매칭한다.
+     * 비어 있으면 우리가 띄운 세션이 아니라는 뜻 — 완료 판정 불가.
+     */
+    var hookSessionId: String = ""
+
     var createdAt: Long = 0
     var startedAt: Long? = null
     var finishedAt: Long? = null
