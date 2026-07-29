@@ -15,6 +15,8 @@ repositories {
 dependencies {
     intellijPlatform {
         intellijIdeaCommunity(providers.gradleProperty("platformVersion"))
+        // 터미널 실행 모드용 — IDEA 에 기본 번들된 플러그인
+        bundledPlugin("org.jetbrains.plugins.terminal")
         // 플랫폼 테스트 프레임워크 미사용 — 순수 로직 테스트라 JUnit5 만으로 충분
         // (추가하면 com.intellij.tests.JUnit5TestSessionListener 가 테스트 실행을 막는다)
     }

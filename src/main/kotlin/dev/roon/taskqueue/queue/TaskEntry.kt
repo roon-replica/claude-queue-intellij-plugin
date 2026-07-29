@@ -2,6 +2,15 @@ package dev.roon.taskqueue.queue
 
 import dev.roon.taskqueue.session.SessionState
 
+/** 실행 방식 */
+enum class ExecMode {
+    /** IntelliJ 터미널에서 대화형 실행 — 화면이 보이고 권한 승인·개입 가능 */
+    TERMINAL,
+
+    /** 백그라운드 헤드리스 실행 — 화면 없음, 무인 진행에 적합 */
+    HEADLESS,
+}
+
 /**
  * claude-talk 의 todo / inprogress / done 모델을 따른다.
  * **추가하면 TODO 로 들어가고, QUEUED(=inprogress)로 옮길 때 실행된다.**
@@ -48,6 +57,9 @@ class TaskEntry() {
      * (claude-talk 의 "방" 에 대응).
      */
     var lane: String = ""
+
+    /** 실행 방식 — 터미널(대화형, 개입 가능) vs 헤드리스(백그라운드) */
+    var execMode: ExecMode = ExecMode.TERMINAL
 
     var createdAt: Long = 0
     var startedAt: Long? = null

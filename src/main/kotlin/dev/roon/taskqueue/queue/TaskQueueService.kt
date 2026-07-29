@@ -52,8 +52,16 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     /** taskId → 결과에서 뽑은 file:line 참조 */
     private val refsByTask = mutableMapOf<String, MutableList<FileRefs.Ref>>()
 
-    /** 테스트에서 교체 가능 */
+    /** 헤드리스 러너 (테스트에서 교체) */
     var launcher: TaskLauncher = ClaudeTaskLauncher()
+
+    /** 터미널 러너 (테스트에서 교체). null 이면 헤드리스로 폴백 */
+    var terminalLauncher: TaskLauncher? = TerminalTaskLauncher()
+
+    private fun launcherFor(task: TaskEntry): TaskLauncher = when (task.execMode) {
+        ExecMode.TERMINAL -> terminalLauncher ?: launcher
+        ExecMode.HEADLESS -> launcher
+    }
 
     /** 시간 주입 — 테스트 결정성 확보 */
     var clock: () -> Long = { System.currentTimeMillis() }
@@ -125,9 +133,15 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
      * (claude-talk 의 todo → inprogress 모델)
      * @param lane 빈 값이면 독립 세션. 이름을 주면 그 레인의 대화를 이어 쓴다
      */
-    fun addTodo(prompt: String, cwd: String, lane: String = ""): TaskEntry {
+    fun addTodo(
+        prompt: String,
+        cwd: String,
+        lane: String = "",
+        execMode: ExecMode = ExecMode.TERMINAL,
+    ): TaskEntry {
         val task = TaskEntry(UUID.randomUUID().toString(), prompt, cwd, clock())
         task.lane = lane.trim()
+        task.execMode = execMode
         state.tasks += task
         // 실행 전에도 레인이 목록에 보여야 한다 — 세션 ID 는 첫 실행 때 채운다
         if (task.lane.isNotEmpty()) registerLane(cwd, task.lane)
@@ -269,7 +283,7 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         synchronized(logBuffer) { logBuffer.clear() }
         notifyChanged()
 
-        running = launcher.launch(
+        running = launcherFor(task).launch(
             task = task,
             onLine = { line -> appendLog(line) },
             onText = { text -> collectRefs(task, text) },

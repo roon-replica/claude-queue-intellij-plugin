@@ -29,10 +29,12 @@ import dev.roon.taskqueue.cli.ClaudeCli
 import dev.roon.taskqueue.git.GitDiffs
 import dev.roon.taskqueue.nav.FileNavigator
 import dev.roon.taskqueue.nav.FileRefs
+import dev.roon.taskqueue.queue.ExecMode
 import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
 import java.awt.BorderLayout
+import java.awt.FlowLayout
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
@@ -59,6 +61,11 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private val laneCombo = ComboBox<String>().apply {
         addItem(NEW_SESSION)
         toolTipText = "같은 레인의 작업은 한 대화를 이어 쓴다 (앞 작업을 기억)"
+    }
+
+    /** 실행 방식 — 터미널이면 실제 Claude Code 화면에서 돌고 개입할 수 있다 */
+    private val modeCombo = ComboBox(arrayOf(MODE_TERMINAL, MODE_HEADLESS)).apply {
+        toolTipText = "터미널: 화면 보이고 권한 승인·개입 가능 / 백그라운드: 화면 없이 무인 실행"
     }
 
     private val todoColumn = QueueColumn("TODO", "여기에 작업을 적어둔다")
@@ -185,9 +192,11 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
         val inputRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
             add(promptField, BorderLayout.CENTER)
-            add(JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
-                add(JBLabel("레인").apply { font = JBFont.small() }, BorderLayout.WEST)
-                add(laneCombo, BorderLayout.CENTER)
+            add(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+                add(JBLabel("레인").apply { font = JBFont.small() })
+                add(laneCombo)
+                add(JBLabel("실행").apply { font = JBFont.small() })
+                add(modeCombo)
             }, BorderLayout.EAST)
         }
 
@@ -261,9 +270,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun addTodo() {
         val prompt = promptField.text?.trim().orEmpty()
         if (prompt.isEmpty()) return
-        queue.addTodo(prompt, cwd(), currentLane())
+        queue.addTodo(prompt, cwd(), currentLane(), currentMode())
         promptField.text = ""
     }
+
+    private fun currentMode(): ExecMode =
+        if (modeCombo.selectedItem == MODE_HEADLESS) ExecMode.HEADLESS else ExecMode.TERMINAL
 
     private fun cwd(): String =
         project.basePath ?: File(System.getProperty("user.home")).absolutePath
@@ -417,6 +429,8 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private companion object {
         const val NEW_SESSION = "새 세션"
+        const val MODE_TERMINAL = "터미널"
+        const val MODE_HEADLESS = "백그라운드"
     }
 
     /** 조건부 활성 액션을 짧게 만드는 헬퍼 */

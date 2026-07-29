@@ -52,6 +52,7 @@ class TaskQueueServiceTest {
         fake = FakeLauncher()
         queue = TaskQueueService().apply {
             launcher = fake
+            terminalLauncher = fake // 터미널 모드도 Fake 로 — 플랫폼 없이 검증
             clock = { now }
         }
     }
@@ -256,6 +257,7 @@ class TaskQueueServiceTest {
         // 새 인스턴스에 로드 = IDE 재시작
         val restored = TaskQueueService().apply {
             launcher = FakeLauncher()
+            terminalLauncher = launcher
             clock = { now }
             autoAdvance = false
         }

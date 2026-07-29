@@ -1,5 +1,7 @@
 <idea-plugin>
     <depends>com.intellij.modules.platform</depends>
+    <!-- 터미널 실행 모드 — IDEA 번들 플러그인 -->
+    <depends>org.jetbrains.plugins.terminal</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Task Queue"
