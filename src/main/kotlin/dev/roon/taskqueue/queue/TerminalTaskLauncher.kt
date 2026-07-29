@@ -67,7 +67,7 @@ class TerminalTaskLauncher(
 
                 val payload =
                     if (reuse) singleLine(task.prompt)
-                    else buildCommand(exe, sessionId, hooks.hookCommand(), writePromptFile(task))
+                    else buildCommand(exe, sessionId, hooks.hookCommand(sessionId), writePromptFile(task))
 
                 val widget = known?.widget ?: createTab(project, task, registry, sessionId)
                 val sentAt = System.currentTimeMillis()

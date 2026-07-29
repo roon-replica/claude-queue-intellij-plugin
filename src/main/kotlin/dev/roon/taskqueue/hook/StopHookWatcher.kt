@@ -56,13 +56,16 @@ class StopHookWatcher : Disposable {
         get() = File(System.getProperty("java.io.tmpdir"), "task-queue/stops")
 
     /**
-     * 훅에 넣을 명령. mktemp 로 파일명이 겹치지 않게 한다.
-     * BSD(macOS) mktemp 는 템플릿이 X 로 끝나야 치환한다 — 확장자를 붙이면 그대로 파일명이 된다.
+     * 훅에 넣을 명령. **세션 ID 를 파일명에 써서 고정 경로로 만든다.**
+     * 두 가지 제약을 실측으로 확인했다:
+     * - `$(mktemp …)` 같은 명령 치환은 훅에서 실패할 수 있다
+     * - temp 경로에서 **파일명에 하이픈이 있으면 훅이 실행되지 않는다**
      */
-    fun hookCommand(): String {
+    fun hookCommand(sessionId: String): String {
         stopsDir.mkdirs()
-        val template = File(stopsDir, "stop-XXXXXXXX").absolutePath
-        return "cat > \"\$(mktemp ${shellQuote(template)})\""
+        // 파일명에 하이픈이 있으면 훅이 실행되지 않는다(실측) — UUID 의 하이픈을 제거한다
+        val target = File(stopsDir, "stop${sessionId.replace("-", "")}.json").absolutePath
+        return "cat > ${shellQuote(target)}"
     }
 
     /** 대기자가 있을 때만 폴링한다 — 유휴 상태에서 헛도는 비용을 없앤다 */
@@ -84,7 +87,7 @@ class StopHookWatcher : Disposable {
 
     /** 새 훅 파일을 읽어 해당 세션 대기자에게 전달하고, 파일은 지운다 */
     private fun sweep() {
-        val files = stopsDir.listFiles { f -> f.isFile && f.name.startsWith("stop-") } ?: return
+        val files = stopsDir.listFiles { f -> f.isFile && f.name.startsWith("stop") && f.name.endsWith(".json") } ?: return
         for (file in files) {
             val signal = parse(file)
             file.delete()
