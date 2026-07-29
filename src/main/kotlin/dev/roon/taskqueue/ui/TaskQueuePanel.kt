@@ -37,7 +37,10 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private val queue = TaskQueueService.getInstance()
 
     private val promptField = JBTextField()
-    private val addButton = JButton("큐에 추가")
+    private val addButton = JButton("추가(todo)")
+    private val runButton = JButton("▶ 실행")
+    private val backButton = JButton("↩ todo")
+    private val runAllButton = JButton("▶▶ todo 전부")
     private val cancelButton = JButton("실행 취소")
     private val retryButton = JButton("재시도")
     private val removeButton = JButton("삭제")
@@ -78,6 +81,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             add(addButton, BorderLayout.EAST)
         }
         val buttonRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+            add(runButton); add(backButton); add(runAllButton)
             add(cancelButton); add(retryButton); add(removeButton)
             add(upButton); add(downButton)
             add(pauseButton); add(clearButton); add(diffButton)
@@ -100,8 +104,11 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             BorderLayout.CENTER,
         )
 
-        addButton.addActionListener { enqueue() }
-        promptField.addActionListener { enqueue() }
+        addButton.addActionListener { addTodo() }
+        promptField.addActionListener { addTodo() }
+        runButton.addActionListener { selected()?.let { queue.promote(it.id) } }
+        backButton.addActionListener { selected()?.let { queue.demote(it.id) } }
+        runAllButton.addActionListener { queue.runAllTodos() }
         cancelButton.addActionListener { queue.cancelRunning() }
         retryButton.addActionListener { selected()?.let { queue.retry(it.id) } }
         removeButton.addActionListener { selected()?.let { queue.remove(it.id) } }
@@ -111,7 +118,10 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         pauseButton.addActionListener { togglePause() }
         diffButton.addActionListener { showDiffChooser() }
 
-        taskList.addListSelectionListener { refreshRefs() }
+        taskList.addListSelectionListener {
+            refreshRefs()
+            updateButtons()
+        }
         refsList.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent) {
                 if (e.clickCount == 2) openSelectedRef()
@@ -128,11 +138,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private fun selected(): TaskEntry? = taskList.selectedValue
 
-    private fun enqueue() {
+    /** 추가는 todo 로만 — 실행은 ▶ 로 올려야 시작된다 */
+    private fun addTodo() {
         val prompt = promptField.text?.trim().orEmpty()
         if (prompt.isEmpty()) return
         val cwd = project.basePath ?: File(System.getProperty("user.home")).absolutePath
-        queue.enqueue(prompt, cwd)
+        queue.addTodo(prompt, cwd)
         promptField.text = ""
     }
 
@@ -172,12 +183,15 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
         val running = queue.runningTask()
         val queuedCount = queue.queued().size
+        val todoCount = queue.todos().size
         pauseButton.text = if (queue.autoAdvance) "일시정지" else "재개"
         cancelButton.isEnabled = running != null
 
+        updateButtons()
+
         statusLabel.text = buildString {
             append(if (queue.autoAdvance) "진행중" else "일시정지")
-            append("  ·  대기 $queuedCount")
+            append("  ·  todo $todoCount  ·  대기 $queuedCount")
             running?.let {
                 append("  ·  실행: ${it.shortLabel()}")
                 append(" [${it.finalState}]")
@@ -187,6 +201,14 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
 
         refreshRefs()
+    }
+
+    /** 선택 상태에 따라 버튼 활성/비활성 */
+    private fun updateButtons() {
+        val sel = selected()
+        runButton.isEnabled = sel != null && !sel.status.isActive
+        backButton.isEnabled = sel?.status == TaskStatus.QUEUED
+        runAllButton.isEnabled = queue.todos().isNotEmpty()
     }
 
     /** 선택 항목의 결과 참조 목록 갱신. 선택이 없으면 실행 중 작업 기준 */
@@ -283,6 +305,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             val task = value as? TaskEntry
             val text = task?.let {
                 val chip = when (it.status) {
+                    TaskStatus.TODO -> "todo"
                     TaskStatus.QUEUED -> "대기"
                     TaskStatus.RUNNING -> "작업중"
                     TaskStatus.DONE -> "완료"

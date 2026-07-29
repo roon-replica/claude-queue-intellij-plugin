@@ -2,8 +2,17 @@ package dev.roon.taskqueue.queue
 
 import dev.roon.taskqueue.session.SessionState
 
+/**
+ * claude-talk 의 todo / inprogress / done 모델을 따른다.
+ * **추가하면 TODO 로 들어가고, QUEUED(=inprogress)로 옮길 때 실행된다.**
+ */
 enum class TaskStatus {
+    /** 적어만 둔 상태 — 실행 대상이 아니다 */
+    TODO,
+
+    /** 진행 대기줄에 올라감 — 순서가 오면 실행된다 */
     QUEUED,
+
     RUNNING,
     DONE,
     FAILED,
@@ -11,6 +20,9 @@ enum class TaskStatus {
     ;
 
     val isFinished: Boolean get() = this == DONE || this == FAILED || this == CANCELED
+
+    /** 실행 대기줄에 있거나 도는 중 */
+    val isActive: Boolean get() = this == QUEUED || this == RUNNING
 }
 
 /**
@@ -25,7 +37,7 @@ class TaskEntry() {
     /** 워크트리/브랜치 기준점. 미지정이면 각 repo 의 현재 기본 브랜치 */
     var baseBranch: String? = null
 
-    var status: TaskStatus = TaskStatus.QUEUED
+    var status: TaskStatus = TaskStatus.TODO
 
     /** 플러그인이 지정한 세션 ID — jsonl 경로 추적용 */
     var sessionId: String? = null

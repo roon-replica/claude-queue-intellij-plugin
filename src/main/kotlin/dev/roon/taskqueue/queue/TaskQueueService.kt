@@ -52,6 +52,8 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
 
     val tasks: List<TaskEntry> get() = state.tasks.toList()
 
+    fun todos(): List<TaskEntry> = state.tasks.filter { it.status == TaskStatus.TODO }
+
     fun queued(): List<TaskEntry> = state.tasks.filter { it.status == TaskStatus.QUEUED }
 
     fun runningTask(): TaskEntry? = runningId?.let { id -> state.tasks.find { it.id == id } }
@@ -102,12 +104,45 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         logListeners.forEach { runCatching { it(line) } }
     }
 
-    fun enqueue(prompt: String, cwd: String): TaskEntry {
+    /**
+     * 작업을 **TODO 로만** 추가한다. 바로 실행하지 않는다 — `promote` 로 올려야 돈다.
+     * (claude-talk 의 todo → inprogress 모델)
+     */
+    fun addTodo(prompt: String, cwd: String): TaskEntry {
         val task = TaskEntry(UUID.randomUUID().toString(), prompt, cwd, clock())
         state.tasks += task
         notifyChanged()
-        maybeStartNext()
         return task
+    }
+
+    /** TODO → QUEUED. 순서가 오면 실행된다 */
+    fun promote(id: String) {
+        val task = find(id) ?: return
+        if (task.status != TaskStatus.TODO && !task.status.isFinished) return
+        task.status = TaskStatus.QUEUED
+        task.errorMessage = null
+        task.exitCode = null
+        task.finishedAt = null
+        notifyChanged()
+        maybeStartNext()
+    }
+
+    /** QUEUED → TODO. 실행 중 항목은 되돌리지 않는다(취소를 써야 한다) */
+    fun demote(id: String) {
+        val task = find(id) ?: return
+        if (task.status != TaskStatus.QUEUED) return
+        task.status = TaskStatus.TODO
+        notifyChanged()
+    }
+
+    /** TODO 전부를 대기줄로 올린다 */
+    fun runAllTodos() {
+        val ids = todos().map { it.id }
+        ids.forEach { id ->
+            find(id)?.let { it.status = TaskStatus.QUEUED }
+        }
+        if (ids.isNotEmpty()) notifyChanged()
+        maybeStartNext()
     }
 
     /** 대기 중 항목 제거. 실행 중이면 취소 후 제거 */
@@ -133,16 +168,11 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         notifyChanged()
     }
 
-    /** 실패/취소 항목을 다시 큐에 올린다 (세션 ID 유지 → 같은 세션에 이어붙음) */
+    /** 실패/취소 항목을 다시 대기줄에 올린다 (세션 ID 유지 → 같은 세션에 이어붙음) */
     fun retry(id: String) {
         val task = find(id) ?: return
         if (!task.status.isFinished) return
-        task.status = TaskStatus.QUEUED
-        task.errorMessage = null
-        task.exitCode = null
-        task.finishedAt = null
-        notifyChanged()
-        maybeStartNext()
+        promote(id)
     }
 
     fun cancelRunning() {
@@ -189,8 +219,29 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         )
     }
 
+    /**
+     * 실행 중 세션 상태 반영. claude-talk `fix-queue-state` 규칙 이식:
+     * - IDLE(사용자 인터럽트) → 자동작업 중단, 현재 항목은 TODO 복귀
+     * - WAITING(질문 대기) → 완료가 아니다. 아무것도 하지 않는다
+     */
     private fun onRunningState(task: TaskEntry, sessionState: SessionState) {
         task.finalState = sessionState
+        if (sessionState == SessionState.IDLE) {
+            abortRun(task)
+            return
+        }
+        notifyChanged()
+    }
+
+    /** 인터럽트로 멈춘 실행을 중단하고 항목을 TODO 로 되돌린다 */
+    private fun abortRun(task: TaskEntry) {
+        running?.cancel()
+        running = null
+        runningId = null
+        task.status = TaskStatus.TODO
+        task.finishedAt = clock()
+        task.errorMessage = "사용자 인터럽트로 중단"
+        autoAdvance = false
         notifyChanged()
     }
 
@@ -231,13 +282,14 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     override fun getState(): TaskQueueState = state
 
     /**
-     * IDE 종료로 죽은 RUNNING 은 QUEUED 로 되돌린다.
-     * 프로세스는 IDE 와 함께 죽으므로 그대로 두면 영원히 실행중으로 남는다.
+     * IDE 종료로 죽은 RUNNING 은 **TODO** 로 되돌린다.
+     * 프로세스는 IDE 와 함께 죽으므로 그대로 두면 영원히 실행중으로 남고,
+     * QUEUED 로 두면 IDE 를 켜자마자 의도 없이 다시 돈다.
      */
     override fun loadState(loaded: TaskQueueState) {
         state = loaded
         state.tasks.filter { it.status == TaskStatus.RUNNING }.forEach {
-            it.status = TaskStatus.QUEUED
+            it.status = TaskStatus.TODO
             it.startedAt = null
         }
         runningId = null

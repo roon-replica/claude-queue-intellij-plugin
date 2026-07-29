@@ -56,17 +56,77 @@ class TaskQueueServiceTest {
         }
     }
 
+    /** todo 로 추가하고 곧바로 대기줄로 올린다 (기존 즉시실행 테스트용 헬퍼) */
+    private fun enqueueAndRun(prompt: String, cwd: String): TaskEntry {
+        val task = queue.addTodo(prompt, cwd)
+        queue.promote(task.id)
+        return task
+    }
+
     @Test
-    fun `enqueue 하면 즉시 첫 작업이 실행된다`() {
-        queue.enqueue("작업1", "/tmp")
+    fun `추가만 하면 실행되지 않는다 — todo 로 들어간다`() {
+        val task = queue.addTodo("작업1", "/tmp")
+        assertEquals(TaskStatus.TODO, task.status)
+        assertEquals(0, fake.launched.size)
+    }
+
+    @Test
+    fun `promote 하면 실행된다`() {
+        val task = queue.addTodo("작업1", "/tmp")
+        queue.promote(task.id)
         assertEquals(1, fake.launched.size)
         assertEquals(TaskStatus.RUNNING, queue.tasks[0].status)
     }
 
     @Test
+    fun `demote 는 대기 항목을 todo 로 되돌린다`() {
+        queue.pause()
+        val task = queue.addTodo("작업1", "/tmp")
+        queue.promote(task.id)
+        assertEquals(TaskStatus.QUEUED, task.status)
+        queue.demote(task.id)
+        assertEquals(TaskStatus.TODO, task.status)
+    }
+
+    @Test
+    fun `실행 중 항목은 demote 되지 않는다`() {
+        val task = enqueueAndRun("작업1", "/tmp")
+        queue.demote(task.id)
+        assertEquals(TaskStatus.RUNNING, task.status)
+    }
+
+    @Test
+    fun `runAllTodos 는 todo 전부를 대기줄로 올린다`() {
+        queue.addTodo("A", "/tmp")
+        queue.addTodo("B", "/tmp")
+        queue.runAllTodos()
+        assertEquals(TaskStatus.RUNNING, queue.tasks[0].status)
+        assertEquals(TaskStatus.QUEUED, queue.tasks[1].status)
+        assertEquals(0, queue.todos().size)
+    }
+
+    @Test
+    fun `인터럽트(IDLE) 는 실행을 중단하고 todo 로 되돌린다`() {
+        val task = enqueueAndRun("작업", "/tmp")
+        fake.emitState(SessionState.IDLE)
+        assertEquals(TaskStatus.TODO, task.status)
+        assertEquals(1, fake.canceled)
+        assertNull(queue.runningTask())
+        assertEquals(false, queue.autoAdvance) // 자동 진행 중단
+    }
+
+    @Test
+    fun `질문 대기(WAITING) 는 완료로 보지 않는다`() {
+        val task = enqueueAndRun("작업", "/tmp")
+        fake.emitState(SessionState.WAITING)
+        assertEquals(TaskStatus.RUNNING, task.status)
+        assertEquals(SessionState.WAITING, task.finalState)
+    }
+
+    @Test
     fun `두 번째 작업은 첫 작업이 끝난 뒤 실행된다`() {
-        queue.enqueue("작업1", "/tmp")
-        queue.enqueue("작업2", "/tmp")
+        enqueueAndRun("작업1", "/tmp")
+        enqueueAndRun("작업2", "/tmp")
 
         assertEquals(1, fake.launched.size) // 순차 — 아직 1건만
         assertEquals(TaskStatus.QUEUED, queue.tasks[1].status)
@@ -79,7 +139,7 @@ class TaskQueueServiceTest {
 
     @Test
     fun `exit 0 이면 DONE`() {
-        queue.enqueue("작업", "/tmp")
+        enqueueAndRun("작업", "/tmp")
         fake.complete(exitCode = 0)
         assertEquals(TaskStatus.DONE, queue.tasks[0].status)
         assertNull(queue.tasks[0].errorMessage)
@@ -87,7 +147,7 @@ class TaskQueueServiceTest {
 
     @Test
     fun `exit 0 이 아니면 FAILED`() {
-        queue.enqueue("작업", "/tmp")
+        enqueueAndRun("작업", "/tmp")
         fake.complete(exitCode = 1)
         assertEquals(TaskStatus.FAILED, queue.tasks[0].status)
         assertEquals("exit 1", queue.tasks[0].errorMessage)
@@ -95,7 +155,7 @@ class TaskQueueServiceTest {
 
     @Test
     fun `exit 0 이라도 result 오류면 FAILED`() {
-        queue.enqueue("작업", "/tmp")
+        enqueueAndRun("작업", "/tmp")
         fake.complete(exitCode = 0, error = "API 오류")
         assertEquals(TaskStatus.FAILED, queue.tasks[0].status)
         assertEquals("API 오류", queue.tasks[0].errorMessage)
@@ -103,8 +163,8 @@ class TaskQueueServiceTest {
 
     @Test
     fun `실패 1건이 큐 전체를 멈추지 않는다`() {
-        queue.enqueue("작업1", "/tmp")
-        queue.enqueue("작업2", "/tmp")
+        enqueueAndRun("작업1", "/tmp")
+        enqueueAndRun("작업2", "/tmp")
         fake.complete(exitCode = 1)
         assertEquals(TaskStatus.FAILED, queue.tasks[0].status)
         assertEquals(TaskStatus.RUNNING, queue.tasks[1].status)
@@ -112,7 +172,7 @@ class TaskQueueServiceTest {
 
     @Test
     fun `retry 는 다시 큐에 올리고 세션 ID 를 유지한다`() {
-        queue.enqueue("작업", "/tmp")
+        enqueueAndRun("작업", "/tmp")
         queue.tasks[0].sessionId = "sess-1"
         fake.complete(exitCode = 1)
 
@@ -125,7 +185,7 @@ class TaskQueueServiceTest {
 
     @Test
     fun `취소하면 CANCELED 로 남고 러너에 취소가 전달된다`() {
-        queue.enqueue("작업", "/tmp")
+        enqueueAndRun("작업", "/tmp")
         queue.cancelRunning()
         assertEquals(TaskStatus.CANCELED, queue.tasks[0].status)
         assertEquals(1, fake.canceled)
@@ -133,8 +193,8 @@ class TaskQueueServiceTest {
 
     @Test
     fun `취소 후 다음 작업은 start 로 이어간다`() {
-        queue.enqueue("작업1", "/tmp")
-        queue.enqueue("작업2", "/tmp")
+        enqueueAndRun("작업1", "/tmp")
+        enqueueAndRun("작업2", "/tmp")
         queue.cancelRunning()
         queue.start()
         assertEquals(TaskStatus.RUNNING, queue.tasks[1].status)
@@ -142,8 +202,8 @@ class TaskQueueServiceTest {
 
     @Test
     fun `pause 중에는 다음 작업을 시작하지 않는다`() {
-        queue.enqueue("작업1", "/tmp")
-        queue.enqueue("작업2", "/tmp")
+        enqueueAndRun("작업1", "/tmp")
+        enqueueAndRun("작업2", "/tmp")
         queue.pause()
         fake.complete()
         assertEquals(TaskStatus.QUEUED, queue.tasks[1].status)
@@ -153,8 +213,8 @@ class TaskQueueServiceTest {
     @Test
     fun `순서 이동`() {
         queue.pause()
-        val a = queue.enqueue("A", "/tmp")
-        val b = queue.enqueue("B", "/tmp")
+        val a = enqueueAndRun("A", "/tmp")
+        val b = enqueueAndRun("B", "/tmp")
         queue.move(b.id, -1)
         assertEquals(listOf(b.id, a.id), queue.tasks.map { it.id })
     }
@@ -162,17 +222,17 @@ class TaskQueueServiceTest {
     @Test
     fun `순서 이동은 범위를 벗어나지 않는다`() {
         queue.pause()
-        val a = queue.enqueue("A", "/tmp")
-        queue.enqueue("B", "/tmp")
+        val a = enqueueAndRun("A", "/tmp")
+        enqueueAndRun("B", "/tmp")
         queue.move(a.id, -5)
         assertEquals("A", queue.tasks[0].prompt)
     }
 
     @Test
     fun `완료 항목 정리`() {
-        queue.enqueue("작업1", "/tmp")
+        enqueueAndRun("작업1", "/tmp")
         fake.complete()
-        queue.enqueue("작업2", "/tmp")
+        enqueueAndRun("작업2", "/tmp")
         queue.clearFinished()
         assertEquals(1, queue.tasks.size)
         assertEquals("작업2", queue.tasks[0].prompt)
@@ -180,7 +240,7 @@ class TaskQueueServiceTest {
 
     @Test
     fun `실행 중 상태 전이가 항목에 기록된다`() {
-        queue.enqueue("작업", "/tmp")
+        enqueueAndRun("작업", "/tmp")
         fake.emitState(SessionState.WORKING)
         assertEquals(SessionState.WORKING, queue.tasks[0].finalState)
         fake.complete(state = SessionState.DONE)
@@ -188,8 +248,8 @@ class TaskQueueServiceTest {
     }
 
     @Test
-    fun `IDE 재시작 시 RUNNING 은 QUEUED 로 복원된다`() {
-        queue.enqueue("작업", "/tmp")
+    fun `IDE 재시작 시 RUNNING 은 todo 로 복원된다`() {
+        enqueueAndRun("작업", "/tmp")
         val saved = queue.getState()
         assertEquals(TaskStatus.RUNNING, saved.tasks[0].status)
 
@@ -201,7 +261,7 @@ class TaskQueueServiceTest {
         }
         restored.loadState(saved)
 
-        assertEquals(TaskStatus.QUEUED, restored.tasks[0].status)
+        assertEquals(TaskStatus.TODO, restored.tasks[0].status)
         assertNull(restored.tasks[0].startedAt)
         assertNull(restored.runningTask())
     }
@@ -210,13 +270,13 @@ class TaskQueueServiceTest {
     fun `리스너가 변경마다 호출된다`() {
         var count = 0
         queue.addListener { count++ }
-        queue.enqueue("작업", "/tmp")
+        enqueueAndRun("작업", "/tmp")
         assertTrue(count >= 2) // 추가 + 실행 시작
     }
 
     @Test
     fun `remove 는 실행 중이면 취소 후 제거한다`() {
-        val t = queue.enqueue("작업", "/tmp")
+        val t = enqueueAndRun("작업", "/tmp")
         queue.remove(t.id)
         assertEquals(0, queue.tasks.size)
         assertEquals(1, fake.canceled)
