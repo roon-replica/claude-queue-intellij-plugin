@@ -8,6 +8,7 @@ import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskStatus
 import dev.roon.taskqueue.session.SessionState
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.Graphics
@@ -25,8 +26,13 @@ import javax.swing.Icon
 import javax.swing.ListCellRenderer
 import javax.swing.SwingConstants
 
-/** 카드 = 상태점 + 프롬프트 1줄 + 메타 1줄 */
-class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRenderer<TaskEntry> {
+/**
+ * 카드 = 상태점 + 프롬프트 1줄 + 메타 1줄.
+ * @param highlight 방금 상태가 바뀐 카드의 잔상 세기 (0f = 없음)
+ */
+class TaskCardRenderer(
+    private val highlight: (TaskEntry) -> Float = { 0f },
+) : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRenderer<TaskEntry> {
 
     private val dot = StatusDot()
     private val title = JLabel()
@@ -73,8 +79,10 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
     ): Component {
         val task = value ?: return this
 
-        background = if (isSelected) list.selectionBackground else list.background
+        val base = if (isSelected) list.selectionBackground else list.background
         val fg = if (isSelected) list.selectionForeground else list.foreground
+        // 방금 옮겨온 카드는 그 상태 색으로 잠깐 물든다
+        background = blend(base, colorOf(task), highlight(task) * HIGHLIGHT_MAX)
         isOpaque = true
 
         dot.color = colorOf(task)
@@ -152,6 +160,18 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
         return if (sec < 60) "%.1fs".format(sec) else "%dm %ds".format((sec / 60).toInt(), (sec % 60).toInt())
     }
 
+    /** 두 색을 [ratio] 만큼 섞는다 — 알파 대신 직접 섞어야 리스트 배경과 자연스럽다 */
+    private fun blend(base: Color, tint: Color, ratio: Float): Color {
+        if (ratio <= 0f) return base
+        val r = ratio.coerceIn(0f, 1f)
+        fun mix(a: Int, b: Int) = (a + (b - a) * r).toInt().coerceIn(0, 255)
+        return Color(
+            mix(base.red, tint.red),
+            mix(base.green, tint.green),
+            mix(base.blue, tint.blue),
+        )
+    }
+
     private fun colorOf(task: TaskEntry): JBColor = when (task.status) {
         TaskStatus.TODO -> JBColor.GRAY
         TaskStatus.QUEUED -> QUEUED
@@ -201,6 +221,9 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
 
         /** 카드 오른쪽 버튼 하나의 폭 — 클릭 판정도 이 값을 쓴다 */
         const val ACTION_WIDTH = 22
+
+        /** 잔상이 가장 진할 때의 혼합 비율 — 글자가 묻히지 않을 만큼만 */
+        private const val HIGHLIGHT_MAX = 0.45f
 
         private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
         private val DATE_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("M/d HH:mm")

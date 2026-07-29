@@ -7,13 +7,13 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.ide.DataManager
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.OnePixelSplitter
+import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -28,6 +28,7 @@ import dev.roon.taskqueue.queue.TaskStatus
 import dev.roon.taskqueue.terminal.TerminalTabs
 import dev.roon.taskqueue.terminal.TerminalTabFocuser
 import java.awt.BorderLayout
+import java.awt.MouseInfo
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
@@ -50,10 +51,20 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
 
 
-    private val todoColumn = QueueColumn("TODO", "Jot down tasks here")
-    private val activeColumn = QueueColumn("IN PROGRESS", "Runs in order once promoted")
-    private val doneColumn = QueueColumn("DONE", "Finished tasks")
-    private val columns = listOf(todoColumn, activeColumn, doneColumn)
+    /**
+     * 상태가 바뀐 카드의 잔상 — 카드가 소리 없이 순간이동하는 걸 눈으로 따라가게.
+     * 타입을 명시한다: 콜백이 `columns` 를 참조해 추론이 순환에 걸린다.
+     */
+    private val highlighter: CardHighlighter = CardHighlighter { repaintColumns() }
+
+    private val strength: (TaskEntry) -> Float = { task -> highlighter.strength(task.id) }
+
+    private val todoColumn = QueueColumn("TODO", "Jot down tasks here", strength)
+    private val activeColumn = QueueColumn("IN PROGRESS", "Runs in order once promoted", strength)
+    private val doneColumn = QueueColumn("DONE", "Finished tasks", strength)
+    private val columns: List<QueueColumn> = listOf(todoColumn, activeColumn, doneColumn)
+
+    private fun repaintColumns() = columns.forEach { it.list.repaint() }
 
     private val statusLabel = JBLabel().apply {
         font = JBFont.small()
@@ -151,7 +162,9 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                         val (what, task) = hit
                         when (what) {
                             CardAction.DELETE -> queue.remove(task.id)
-                            CardAction.RUN -> chooseTerminal { tab -> queue.promote(task.id, tab) }
+                            CardAction.RUN -> chooseTerminal(RelativePoint(e)) { tab ->
+                                queue.promote(task.id, tab)
+                            }
                             CardAction.EDIT -> editPrompt(task)
                         }
                         return
@@ -250,7 +263,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
      * 실행할 터미널을 팔레트로 고른다. 열린 탭이 없으면 묻지 않고 새 탭으로 진행.
      * @param onChosen 선택된 탭 이름 ("" = 새 탭)
      */
-    private fun chooseTerminal(onChosen: (String) -> Unit) {
+    private fun chooseTerminal(anchor: RelativePoint? = null, onChosen: (String) -> Unit) {
         val tabs = TerminalTabs.list(project)
         if (tabs.isEmpty()) {
             onChosen("")
@@ -258,7 +271,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
 
         val items = listOf(NEW_TERMINAL) + tabs.map { it.display }
-        JBPopupFactory.getInstance()
+        val popup = JBPopupFactory.getInstance()
             .createPopupChooserBuilder(items)
             .setTitle("Run in terminal")
             .setMovable(false)
@@ -269,8 +282,16 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 onChosen(tab)
             }
             .createPopup()
-            .showInBestPositionFor(DataManager.getInstance().getDataContext(this))
+
+        // 누른 자리에 띄운다 — showInBestPositionFor 는 패널 기준으로 잡아 엉뚱한 데 뜬다
+        val at = anchor ?: cursorPoint()
+        if (at != null) popup.show(at) else popup.showInFocusCenter()
     }
+
+    /** 마우스가 있는 곳 — 드래그·툴바 조작 모두 커서 근처가 자연스럽다 */
+    private fun cursorPoint(): RelativePoint? = runCatching {
+        MouseInfo.getPointerInfo()?.location?.let { RelativePoint.fromScreen(it) }
+    }.getOrNull()
 
     private fun togglePause() {
         if (queue.autoAdvance) queue.pause() else queue.start()
@@ -300,6 +321,10 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         activeColumn.setTasks(all.filter { it.status.isActive })
         doneColumn.setTasks(all.filter { it.status.isFinished })
         doneColumn.setHeaderActionEnabled(all.any { it.status.isFinished })
+
+        // 상태가 바뀐 카드에 잔상을 걸고, 새 컬럼에서 보이게 스크롤한다
+        val moved = highlighter.onTasksChanged(all.map { it.id to it.status })
+        moved.forEach { id -> columns.forEach { it.scrollTo(id) } }
 
         statusLabel.text = buildString {
             append(if (queue.autoAdvance) "Auto-advance ON" else "Paused")
@@ -340,7 +365,10 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             .setRequestFocus(true)
             .setMinSize(JBUI.size(560, 320))
             .createPopup()
-            .showInBestPositionFor(DataManager.getInstance().getDataContext(this))
+            .let { popup ->
+                val at = cursorPoint()
+                if (at != null) popup.show(at) else popup.showInFocusCenter()
+            }
     }
 
     private fun ui(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)
@@ -383,5 +411,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     override fun dispose() {
         queue.removeListener(queueListener)
         queue.removeLogListener(logListener)
+        highlighter.stop()
     }
 }

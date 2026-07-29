@@ -20,13 +20,14 @@ import javax.swing.ListSelectionModel
 class QueueColumn(
     title: String,
     private val emptyHint: String,
+    highlight: (TaskEntry) -> Float = { 0f },
 ) : JPanel(BorderLayout()) {
 
     val model = DefaultListModel<TaskEntry>()
 
     val list = JBList(model).apply {
         selectionMode = ListSelectionModel.SINGLE_SELECTION
-        cellRenderer = TaskCardRenderer()
+        cellRenderer = TaskCardRenderer(highlight)
         emptyText.text = emptyHint
     }
 
@@ -86,6 +87,12 @@ class QueueColumn(
     fun clearSelection() = list.clearSelection()
 
     fun tasks(): List<TaskEntry> = (0 until model.size()).map { model.getElementAt(it) }
+
+    /** 방금 옮겨온 카드를 화면에 보이게 — 컬럼이 길면 스크롤 밖에 있을 수 있다 */
+    fun scrollTo(taskId: String) {
+        val index = (0 until model.size()).firstOrNull { model.getElementAt(it).id == taskId } ?: return
+        list.ensureIndexIsVisible(index)
+    }
 
     val selected: TaskEntry? get() = list.selectedValue
 }
