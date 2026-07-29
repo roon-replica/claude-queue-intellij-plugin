@@ -35,7 +35,10 @@ class StopHookWatcher : Disposable {
     fun awaitStop(sessionId: String, since: Long, onStop: (StopSignal) -> Unit): Registration {
         waiters[sessionId] = Waiter(since, onStop)
         ensurePolling()
-        return Registration { waiters.remove(sessionId) }
+        return Registration {
+            waiters.remove(sessionId)
+            stopPollingIfIdle()
+        }
     }
 
     fun interface Registration {
@@ -55,10 +58,21 @@ class StopHookWatcher : Disposable {
         return "cat > \"\$(mktemp ${shellQuote(template)})\""
     }
 
+    /** 대기자가 있을 때만 폴링한다 — 유휴 상태에서 헛도는 비용을 없앤다 */
     private fun ensurePolling() {
-        if (poller != null) return
-        poller = AppExecutorUtil.getAppScheduledExecutorService()
-            .scheduleWithFixedDelay(::sweep, POLL_MS, POLL_MS, TimeUnit.MILLISECONDS)
+        synchronized(this) {
+            if (poller != null) return
+            poller = AppExecutorUtil.getAppScheduledExecutorService()
+                .scheduleWithFixedDelay(::sweep, 0, POLL_MS, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    private fun stopPollingIfIdle() {
+        synchronized(this) {
+            if (waiters.isNotEmpty()) return
+            poller?.cancel(false)
+            poller = null
+        }
     }
 
     /** 새 훅 파일을 읽어 해당 세션 대기자에게 전달하고, 파일은 지운다 */
@@ -78,6 +92,7 @@ class StopHookWatcher : Disposable {
             runCatching { waiter.onStop(signal) }
                 .onFailure { thisLogger().warn("Stop 처리 실패", it) }
         }
+        stopPollingIfIdle()
     }
 
     private fun parse(file: File): StopSignal? = try {
