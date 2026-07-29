@@ -13,6 +13,8 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.OnePixelSplitter
@@ -51,6 +53,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private val promptField = JBTextField().apply {
         emptyText.text = "작업 내용 입력 후 Enter — todo 로 추가된다"
+    }
+
+    /** 레인 = 이어 쓸 대화. NEW_SESSION 은 매 작업 독립 세션 */
+    private val laneCombo = ComboBox<String>().apply {
+        addItem(NEW_SESSION)
+        toolTipText = "같은 레인의 작업은 한 대화를 이어 쓴다 (앞 작업을 기억)"
     }
 
     private val todoColumn = QueueColumn("TODO", "여기에 작업을 적어둔다")
@@ -154,6 +162,14 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 showDiffChooser()
             })
             addSeparator()
+            add(action("레인 추가", "이름을 붙인 대화 레인을 만든다", AllIcons.General.Add, { true }) {
+                createLane()
+            })
+            add(action("레인 초기화", "선택한 레인의 대화를 끊고 새로 시작", AllIcons.Actions.Restart,
+                { currentLane().isNotEmpty() }) {
+                resetLane()
+            })
+            addSeparator()
             add(action("완료 정리", "완료·실패 항목 제거", AllIcons.Actions.GC,
                 { queue.tasks.any { it.status.isFinished } }) {
                 queue.clearFinished()
@@ -167,9 +183,17 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             .createActionToolbar("TaskQueue.Toolbar", group, true)
         toolbar.targetComponent = this
 
+        val inputRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
+            add(promptField, BorderLayout.CENTER)
+            add(JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+                add(JBLabel("레인").apply { font = JBFont.small() }, BorderLayout.WEST)
+                add(laneCombo, BorderLayout.CENTER)
+            }, BorderLayout.EAST)
+        }
+
         return JPanel(BorderLayout()).apply {
             add(toolbar.component, BorderLayout.NORTH)
-            add(promptField, BorderLayout.SOUTH)
+            add(inputRow, BorderLayout.SOUTH)
             border = JBUI.Borders.empty(2, 4)
         }
     }
@@ -237,9 +261,47 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun addTodo() {
         val prompt = promptField.text?.trim().orEmpty()
         if (prompt.isEmpty()) return
-        val cwd = project.basePath ?: File(System.getProperty("user.home")).absolutePath
-        queue.addTodo(prompt, cwd)
+        queue.addTodo(prompt, cwd(), currentLane())
         promptField.text = ""
+    }
+
+    private fun cwd(): String =
+        project.basePath ?: File(System.getProperty("user.home")).absolutePath
+
+    /** 선택된 레인 이름. 빈 문자열이면 독립 세션 */
+    private fun currentLane(): String =
+        (laneCombo.selectedItem as? String)?.takeIf { it != NEW_SESSION }.orEmpty()
+
+    private fun createLane() {
+        val name = Messages.showInputDialog(
+            project,
+            "레인 이름 — 같은 레인의 작업들이 한 대화를 이어 씁니다.",
+            "레인 추가",
+            null,
+        )?.trim().orEmpty()
+        if (name.isEmpty() || name == NEW_SESSION) return
+        if ((0 until laneCombo.itemCount).none { laneCombo.getItemAt(it) == name }) {
+            laneCombo.addItem(name)
+        }
+        laneCombo.selectedItem = name
+    }
+
+    private fun resetLane() {
+        val lane = currentLane()
+        if (lane.isEmpty()) return
+        queue.resetLane(cwd(), lane)
+        statusLabel.text = "레인 '$lane' 초기화 — 다음 실행부터 새 대화"
+    }
+
+    /** 저장된 레인을 콤보에 채운다 (선택은 유지) */
+    private fun refreshLanes() {
+        val saved = queue.lanes(cwd())
+        val current = laneCombo.selectedItem as? String
+        val existing = (0 until laneCombo.itemCount).map { laneCombo.getItemAt(it) }
+        val missing = saved.filter { it !in existing }
+        if (missing.isEmpty()) return
+        missing.forEach { laneCombo.addItem(it) }
+        if (current != null) laneCombo.selectedItem = current
     }
 
     private fun togglePause() {
@@ -265,6 +327,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     private fun refresh() {
+        refreshLanes()
         val all = queue.tasks
         todoColumn.setTasks(all.filter { it.status == TaskStatus.TODO })
         activeColumn.setTasks(all.filter { it.status.isActive })
@@ -351,6 +414,10 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     private fun ui(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)
+
+    private companion object {
+        const val NEW_SESSION = "새 세션"
+    }
 
     /** 조건부 활성 액션을 짧게 만드는 헬퍼 */
     private fun action(

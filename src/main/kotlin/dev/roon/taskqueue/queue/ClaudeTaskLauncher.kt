@@ -31,8 +31,13 @@ class ClaudeTaskLauncher(
         val workDir = File(task.cwd)
         val sessionId = task.sessionId ?: UUID.randomUUID().toString().also { task.sessionId = it }
         val sessionFile = SessionPaths.sessionFile(workDir.absolutePath, sessionId)
-        // 재시도 시 같은 파일에 이어 쌓이므로, 이번 실행분만 판정 대상으로 삼는다
-        val fromOffset = if (sessionFile.isFile) sessionFile.length() else 0L
+
+        // jsonl 이 이미 있으면 그 세션은 쓰인 적 있다 → --resume 이어야 한다
+        // (--session-id 재사용은 "already in use" 로 실패). 레인 이어가기·재시도 모두 이 규칙으로 처리
+        val resume = sessionFile.isFile
+
+        // 이어붙는 경우 이번 실행분만 판정 대상으로 삼는다
+        val fromOffset = if (resume) sessionFile.length() else 0L
 
         var cost: Double? = null
         var errorMessage: String? = null
@@ -48,6 +53,7 @@ class ClaudeTaskLauncher(
                     prompt = task.prompt,
                     workDir = workDir,
                     sessionId = sessionId,
+                    resume = resume,
                     onEvent = { e ->
                         e.assistantText?.let(onText)
                         if (e.isResult) {

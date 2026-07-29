@@ -49,13 +49,17 @@ class ClaudeCli {
 
     /**
      * 프롬프트 1건을 비대화형으로 실행한다.
-     * @param sessionId 지정하면 해당 세션으로 실행 — 재개/추적에 사용
+     * @param sessionId 지정하면 해당 세션으로 실행 — 추적/이어가기에 사용
+     * @param resume 이미 존재하는 세션에 이어붙일 때 true.
+     *   **`--session-id` 를 이미 쓴 세션에 다시 쓰면 "already in use" 로 실패한다** (실측 확인).
+     *   이어가기는 반드시 `--resume` 이어야 한다.
      * @return 시작된 프로세스 핸들러. 취소는 destroyProcess() 로.
      */
     fun run(
         prompt: String,
         workDir: File,
         sessionId: String? = null,
+        resume: Boolean = false,
         onEvent: (StreamEvent) -> Unit,
         onRawLine: (String) -> Unit = {},
         onFinish: (exitCode: Int) -> Unit = {},
@@ -66,7 +70,9 @@ class ClaudeCli {
             addParameters("-p", prompt)
             // stream-json 은 print 모드에서 --verbose 를 함께 요구한다
             addParameters("--output-format", "stream-json", "--verbose")
-            sessionId?.let { addParameters("--session-id", it) }
+            sessionId?.let {
+                if (resume) addParameters("--resume", it) else addParameters("--session-id", it)
+            }
             setWorkDirectory(workDir)
             withCharset(Charsets.UTF_8)
         }

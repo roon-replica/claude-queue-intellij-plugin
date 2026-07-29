@@ -12,10 +12,26 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 
+/** 레인 = 이름 붙인 대화 세션. cwd 별로 세션이 다르므로 cwd 도 함께 보관 */
+class LaneEntry() {
+    var name: String = ""
+    var cwd: String = ""
+    var sessionId: String = ""
+
+    constructor(name: String, cwd: String, sessionId: String) : this() {
+        this.name = name
+        this.cwd = cwd
+        this.sessionId = sessionId
+    }
+}
+
 /** 큐 상태 스냅샷 — XML 로 영속화 */
 class TaskQueueState {
     @get:XCollection(style = XCollection.Style.v2)
     var tasks: MutableList<TaskEntry> = mutableListOf()
+
+    @get:XCollection(style = XCollection.Style.v2)
+    var lanes: MutableList<LaneEntry> = mutableListOf()
 }
 
 /**
@@ -107,12 +123,50 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     /**
      * 작업을 **TODO 로만** 추가한다. 바로 실행하지 않는다 — `promote` 로 올려야 돈다.
      * (claude-talk 의 todo → inprogress 모델)
+     * @param lane 빈 값이면 독립 세션. 이름을 주면 그 레인의 대화를 이어 쓴다
      */
-    fun addTodo(prompt: String, cwd: String): TaskEntry {
+    fun addTodo(prompt: String, cwd: String, lane: String = ""): TaskEntry {
         val task = TaskEntry(UUID.randomUUID().toString(), prompt, cwd, clock())
+        task.lane = lane.trim()
         state.tasks += task
+        // 실행 전에도 레인이 목록에 보여야 한다 — 세션 ID 는 첫 실행 때 채운다
+        if (task.lane.isNotEmpty()) registerLane(cwd, task.lane)
         notifyChanged()
         return task
+    }
+
+    // --- 레인 ---
+
+    /** 해당 cwd 에 등록된 레인 이름 */
+    fun lanes(cwd: String): List<String> =
+        state.lanes.filter { it.cwd == cwd }.map { it.name }.distinct().sorted()
+
+    /** 레인의 현재 세션 ID (없으면 null) */
+    fun laneSessionId(cwd: String, lane: String): String? =
+        state.lanes.firstOrNull { it.cwd == cwd && it.name == lane }?.sessionId?.ifEmpty { null }
+
+    /** 레인을 비운다 — 다음 실행부터 새 대화로 시작 */
+    fun resetLane(cwd: String, lane: String) {
+        state.lanes.removeAll { it.cwd == cwd && it.name == lane }
+        notifyChanged()
+    }
+
+    /** 세션 ID 없이 레인만 등록 (목록 표시용) */
+    private fun registerLane(cwd: String, lane: String) {
+        if (state.lanes.none { it.cwd == cwd && it.name == lane }) {
+            state.lanes += LaneEntry(lane, cwd, "")
+        }
+    }
+
+    /** 레인의 세션 ID 를 확보한다. 비어 있으면 만들어 저장 */
+    private fun ensureLaneSession(cwd: String, lane: String): String {
+        val existing = state.lanes.firstOrNull { it.cwd == cwd && it.name == lane }
+        existing?.sessionId?.takeIf { it.isNotEmpty() }?.let { return it }
+
+        val sessionId = UUID.randomUUID().toString()
+        if (existing != null) existing.sessionId = sessionId
+        else state.lanes += LaneEntry(lane, cwd, sessionId)
+        return sessionId
     }
 
     /** TODO → QUEUED. 순서가 오면 실행된다 */
@@ -203,6 +257,11 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     }
 
     private fun startTask(task: TaskEntry) {
+        // 레인 소속이면 그 레인의 세션을 이어 쓴다. 독립 작업은 러너가 새로 만든다
+        if (task.lane.isNotEmpty()) {
+            task.sessionId = ensureLaneSession(task.cwd, task.lane)
+        }
+
         task.status = TaskStatus.RUNNING
         task.startedAt = clock()
         task.attempts += 1

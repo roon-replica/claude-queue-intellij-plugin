@@ -42,6 +42,13 @@ class TaskEntry() {
     /** 플러그인이 지정한 세션 ID — jsonl 경로 추적용 */
     var sessionId: String? = null
 
+    /**
+     * 레인 이름. 빈 값이면 이 작업만의 새 세션(독립 실행).
+     * 같은 레인의 작업들은 한 세션을 이어 쓰므로 앞 작업의 대화를 기억한다
+     * (claude-talk 의 "방" 에 대응).
+     */
+    var lane: String = ""
+
     var createdAt: Long = 0
     var startedAt: Long? = null
     var finishedAt: Long? = null

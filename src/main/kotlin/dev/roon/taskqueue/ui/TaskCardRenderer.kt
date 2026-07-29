@@ -73,6 +73,7 @@ class TaskCardRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRendere
     /** 상태에 따라 다른 정보를 보여준다 — 완료는 비용/시간, 실패는 이유 */
     private fun metaOf(task: TaskEntry): String {
         val parts = mutableListOf<String>()
+        if (task.lane.isNotEmpty()) parts += "⌗ ${task.lane}"
 
         when (task.status) {
             TaskStatus.RUNNING -> {
