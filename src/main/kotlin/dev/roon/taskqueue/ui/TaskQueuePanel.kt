@@ -4,6 +4,11 @@ import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionToolbar
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
@@ -14,6 +19,7 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
+import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import dev.roon.taskqueue.cli.ClaudeCli
 import dev.roon.taskqueue.git.GitDiffs
@@ -23,107 +29,78 @@ import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
 import java.awt.BorderLayout
-import java.awt.FlowLayout
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.io.File
 import javax.swing.DefaultListModel
-import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
+import javax.swing.SwingConstants
 
-/** 자동작업 큐 보드 + 실행 로그 */
+/**
+ * 자동작업 큐 보드 — todo / 진행 / 완료 3컬럼 + 실행 로그 + 결과 참조.
+ * 추가는 todo 로만 들어가고, ▶ 로 올릴 때 실행된다.
+ */
 class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val cli = ClaudeCli.getInstance()
     private val queue = TaskQueueService.getInstance()
 
-    private val promptField = JBTextField()
-    private val addButton = JButton("추가(todo)")
-    private val runButton = JButton("▶ 실행")
-    private val backButton = JButton("↩ todo")
-    private val runAllButton = JButton("▶▶ todo 전부")
-    private val cancelButton = JButton("실행 취소")
-    private val retryButton = JButton("재시도")
-    private val removeButton = JButton("삭제")
-    private val upButton = JButton("↑")
-    private val downButton = JButton("↓")
-    private val pauseButton = JButton("일시정지")
-    private val clearButton = JButton("완료 정리")
-    private val diffButton = JButton("변경분 diff")
+    private val promptField = JBTextField().apply {
+        emptyText.text = "작업 내용 입력 후 Enter — todo 로 추가된다"
+    }
+
+    private val todoColumn = QueueColumn("TODO", "여기에 작업을 적어둔다")
+    private val activeColumn = QueueColumn("진행", "▶ 로 올리면 여기서 순서대로 실행")
+    private val doneColumn = QueueColumn("완료", "끝난 작업")
+    private val columns = listOf(todoColumn, activeColumn, doneColumn)
+
+    private val statusLabel = JBLabel().apply {
+        font = JBFont.small()
+        border = JBUI.Borders.empty(3, 6)
+    }
+
+    private val logArea = JBTextArea().apply {
+        isEditable = false
+        lineWrap = true
+        font = JBFont.small()
+    }
 
     private val refsModel = DefaultListModel<FileRefs.Ref>()
     private val refsList = JBList(refsModel).apply {
         selectionMode = ListSelectionModel.SINGLE_SELECTION
-        emptyText.text = "결과에서 찾은 file:line 이 여기 표시된다"
+        emptyText.text = "결과에 나온 file:line — 더블클릭으로 이동"
+        cellRenderer = object : javax.swing.DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: javax.swing.JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean,
+            ) = super.getListCellRendererComponent(
+                list,
+                (value as? FileRefs.Ref)?.label() ?: value,
+                index,
+                isSelected,
+                cellHasFocus,
+            )
+        }
     }
 
-    private val statusLabel = JBLabel()
-    private val listModel = DefaultListModel<TaskEntry>()
-    private val taskList = JBList(listModel).apply {
-        selectionMode = ListSelectionModel.SINGLE_SELECTION
-        cellRenderer = TaskCellRenderer()
-    }
-    private val logArea = JBTextArea().apply {
-        isEditable = false
-        lineWrap = true
-    }
-
-    /** CLI 탐지 결과 — 비동기로 채워진다 */
-    private var cliInfo: String = "claude 확인 중…"
+    private var cliInfo = "claude 확인 중…"
 
     private val queueListener: () -> Unit = { ui { refresh() } }
     private val logListener: (String) -> Unit = { line -> ui { appendLog(line) } }
 
     init {
-        border = JBUI.Borders.empty(8)
+        add(buildToolbar(), BorderLayout.NORTH)
+        add(buildBody(), BorderLayout.CENTER)
+        add(statusLabel, BorderLayout.SOUTH)
 
-        val inputRow = JPanel(BorderLayout(8, 0)).apply {
-            add(promptField, BorderLayout.CENTER)
-            add(addButton, BorderLayout.EAST)
-        }
-        val buttonRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
-            add(runButton); add(backButton); add(runAllButton)
-            add(cancelButton); add(retryButton); add(removeButton)
-            add(upButton); add(downButton)
-            add(pauseButton); add(clearButton); add(diffButton)
-        }
-
-        add(JPanel(BorderLayout()).apply {
-            add(inputRow, BorderLayout.NORTH)
-            add(buttonRow, BorderLayout.CENTER)
-            add(statusLabel, BorderLayout.SOUTH)
-        }, BorderLayout.NORTH)
-
-        add(
-            OnePixelSplitter(false, 0.35f).apply {
-                firstComponent = JBScrollPane(taskList)
-                secondComponent = OnePixelSplitter(true, 0.65f).apply {
-                    firstComponent = JBScrollPane(logArea)
-                    secondComponent = JBScrollPane(refsList)
-                }
-            },
-            BorderLayout.CENTER,
-        )
-
-        addButton.addActionListener { addTodo() }
         promptField.addActionListener { addTodo() }
-        runButton.addActionListener { selected()?.let { queue.promote(it.id) } }
-        backButton.addActionListener { selected()?.let { queue.demote(it.id) } }
-        runAllButton.addActionListener { queue.runAllTodos() }
-        cancelButton.addActionListener { queue.cancelRunning() }
-        retryButton.addActionListener { selected()?.let { queue.retry(it.id) } }
-        removeButton.addActionListener { selected()?.let { queue.remove(it.id) } }
-        upButton.addActionListener { selected()?.let { queue.move(it.id, -1) } }
-        downButton.addActionListener { selected()?.let { queue.move(it.id, 1) } }
-        clearButton.addActionListener { queue.clearFinished() }
-        pauseButton.addActionListener { togglePause() }
-        diffButton.addActionListener { showDiffChooser() }
-
-        taskList.addListSelectionListener {
-            refreshRefs()
-            updateButtons()
-        }
-        refsList.addMouseListener(object : java.awt.event.MouseAdapter() {
-            override fun mouseClicked(e: java.awt.event.MouseEvent) {
+        wireColumns()
+        refsList.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
                 if (e.clickCount == 2) openSelectedRef()
             }
         })
@@ -136,9 +113,110 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         refresh()
     }
 
-    private fun selected(): TaskEntry? = taskList.selectedValue
+    // --- 레이아웃 ---
 
-    /** 추가는 todo 로만 — 실행은 ▶ 로 올려야 시작된다 */
+    private fun buildToolbar(): JPanel {
+        val group = DefaultActionGroup().apply {
+            add(action("▶ 실행", "선택한 todo 를 진행줄로", { selected()?.let { !it.status.isActive } == true }) {
+                selected()?.let { queue.promote(it.id) }
+            })
+            add(action("▶▶ 전부", "todo 전부를 진행줄로", { queue.todos().isNotEmpty() }) {
+                queue.runAllTodos()
+            })
+            add(action("↩ todo", "진행 대기 항목을 todo 로", { selected()?.status == TaskStatus.QUEUED }) {
+                selected()?.let { queue.demote(it.id) }
+            })
+            addSeparator()
+            add(action("■ 취소", "실행 중 작업 중단", { queue.runningTask() != null }) {
+                queue.cancelRunning()
+            })
+            add(action("↻ 재시도", "실패/취소 항목 다시 실행", { selected()?.status?.isFinished == true }) {
+                selected()?.let { queue.retry(it.id) }
+            })
+            addSeparator()
+            add(action("↑", "순서 올리기", { selected() != null }) { selected()?.let { queue.move(it.id, -1) } })
+            add(action("↓", "순서 내리기", { selected() != null }) { selected()?.let { queue.move(it.id, 1) } })
+            addSeparator()
+            add(action("일시정지/재개", "자동 진행 토글", { true }) { togglePause() })
+            add(action("완료 정리", "완료·실패 항목 제거", { queue.tasks.any { it.status.isFinished } }) {
+                queue.clearFinished()
+            })
+            add(action("변경분 diff", "HEAD 대비 변경 파일 보기", { true }) { showDiffChooser() })
+            addSeparator()
+            add(action("× 삭제", "항목 제거", { selected() != null }) { selected()?.let { queue.remove(it.id) } })
+        }
+
+        val toolbar: ActionToolbar = ActionManager.getInstance()
+            .createActionToolbar("TaskQueue.Toolbar", group, true)
+        toolbar.targetComponent = this
+
+        return JPanel(BorderLayout()).apply {
+            add(toolbar.component, BorderLayout.NORTH)
+            add(promptField, BorderLayout.SOUTH)
+            border = JBUI.Borders.empty(2, 4)
+        }
+    }
+
+    private fun buildBody(): OnePixelSplitter {
+        val board = OnePixelSplitter(false, 0.34f).apply {
+            firstComponent = todoColumn
+            secondComponent = OnePixelSplitter(false, 0.5f).apply {
+                firstComponent = activeColumn
+                secondComponent = doneColumn
+            }
+        }
+
+        val detail = OnePixelSplitter(true, 0.7f).apply {
+            firstComponent = JPanel(BorderLayout()).apply {
+                add(sectionLabel("실행 로그"), BorderLayout.NORTH)
+                add(JBScrollPane(logArea), BorderLayout.CENTER)
+            }
+            secondComponent = JPanel(BorderLayout()).apply {
+                add(sectionLabel("결과 파일"), BorderLayout.NORTH)
+                add(JBScrollPane(refsList), BorderLayout.CENTER)
+            }
+        }
+
+        return OnePixelSplitter(false, 0.62f).apply {
+            firstComponent = board
+            secondComponent = detail
+        }
+    }
+
+    private fun sectionLabel(text: String) = JBLabel(text, SwingConstants.LEFT).apply {
+        font = JBFont.smallOrNewUiMedium().asBold()
+        border = JBUI.Borders.empty(4, 6)
+    }
+
+    /** 한 컬럼에서 고르면 나머지 선택을 지운다 — 선택은 항상 하나 */
+    private fun wireColumns() {
+        columns.forEach { column ->
+            column.list.addListSelectionListener { e ->
+                if (e.valueIsAdjusting) return@addListSelectionListener
+                if (column.selected != null) {
+                    columns.filter { it !== column }.forEach { it.clearSelection() }
+                }
+                refreshRefs()
+            }
+            // 더블클릭 = 컬럼 간 이동 (todo→진행, 진행→todo)
+            column.list.addMouseListener(object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    if (e.clickCount != 2) return
+                    val task = column.selected ?: return
+                    when (task.status) {
+                        TaskStatus.TODO -> queue.promote(task.id)
+                        TaskStatus.QUEUED -> queue.demote(task.id)
+                        else -> Unit
+                    }
+                }
+            })
+        }
+    }
+
+    // --- 동작 ---
+
+    private fun selected(): TaskEntry? = columns.firstNotNullOfOrNull { it.selected }
+
     private fun addTodo() {
         val prompt = promptField.text?.trim().orEmpty()
         if (prompt.isEmpty()) return
@@ -152,66 +230,39 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         refresh()
     }
 
-    /**
-     * CLI 미설치면 큐 추가를 막고 안내한다.
-     * 프로세스 실행은 EDT 에서 금지 — pooled thread 로 돌리고 결과만 EDT 에서 반영한다.
-     */
+    /** 프로세스 실행은 EDT 금지 — 백그라운드에서 조회하고 결과만 EDT 로 */
     private fun refreshCliStatus() {
         ApplicationManager.getApplication().executeOnPooledThread {
             val exe = cli.findExecutable()
             val version = if (exe != null) cli.version() else null
             ui {
                 if (exe == null) {
-                    statusLabel.text = "claude CLI 를 찾을 수 없다 — 설치 후 IDE 재시작"
-                    addButton.isEnabled = false
+                    cliInfo = "claude CLI 없음 — 설치 후 IDE 재시작"
                     promptField.isEnabled = false
                 } else {
                     cliInfo = "claude ${version ?: "?"}"
-                    refresh()
                 }
+                refresh()
             }
         }
     }
 
     private fun refresh() {
-        val selectedId = selected()?.id
-        listModel.clear()
-        queue.tasks.forEach { listModel.addElement(it) }
-        selectedId?.let { id ->
-            queue.tasks.indexOfFirst { it.id == id }.takeIf { it >= 0 }?.let { taskList.selectedIndex = it }
-        }
-
-        val running = queue.runningTask()
-        val queuedCount = queue.queued().size
-        val todoCount = queue.todos().size
-        pauseButton.text = if (queue.autoAdvance) "일시정지" else "재개"
-        cancelButton.isEnabled = running != null
-
-        updateButtons()
+        val all = queue.tasks
+        todoColumn.setTasks(all.filter { it.status == TaskStatus.TODO })
+        activeColumn.setTasks(all.filter { it.status.isActive })
+        doneColumn.setTasks(all.filter { it.status.isFinished })
 
         statusLabel.text = buildString {
-            append(if (queue.autoAdvance) "진행중" else "일시정지")
-            append("  ·  todo $todoCount  ·  대기 $queuedCount")
-            running?.let {
-                append("  ·  실행: ${it.shortLabel()}")
-                append(" [${it.finalState}]")
-            }
-            append("  ·  cwd: ${project.basePath ?: "-"}")
-            append("  ·  $cliInfo")
+            append(if (queue.autoAdvance) "자동 진행 ON" else "일시정지")
+            queue.runningTask()?.let { append("  ·  실행: ${it.shortLabel()}") }
+            append("  ·  ").append(project.basePath?.let(::File)?.name ?: "-")
+            append("  ·  ").append(cliInfo)
         }
 
         refreshRefs()
     }
 
-    /** 선택 상태에 따라 버튼 활성/비활성 */
-    private fun updateButtons() {
-        val sel = selected()
-        runButton.isEnabled = sel != null && !sel.status.isActive
-        backButton.isEnabled = sel?.status == TaskStatus.QUEUED
-        runAllButton.isEnabled = queue.todos().isNotEmpty()
-    }
-
-    /** 선택 항목의 결과 참조 목록 갱신. 선택이 없으면 실행 중 작업 기준 */
     private fun refreshRefs() {
         val task = selected() ?: queue.runningTask()
         val refs = task?.let { queue.refs(it.id) } ?: emptyList()
@@ -229,7 +280,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
     }
 
-    /** 선택 작업의 cwd 기준 변경 파일 목록 → 고르면 IntelliJ diff 뷰어 */
     private fun showDiffChooser() {
         val task = selected() ?: queue.runningTask()
         val cwd = File(task?.cwd ?: project.basePath ?: return)
@@ -250,7 +300,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                     .setTitle("변경분 (${files.size}개)")
                     .setItemChosenCallback { path -> showDiff(cwd, path) }
                     .createPopup()
-                    .showUnderneathOf(diffButton)
+                    .showInCenterOf(this)
             }
         }
     }
@@ -276,52 +326,29 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
     }
 
+    /** 원시 stream-json 대신 사람이 읽는 한 줄로 */
     private fun appendLog(line: String) {
-        // 원시 stream-json 은 길어서 요약만 — 상세는 IDE 로그/파일로
-        logArea.append(summarize(line) + "\n")
+        val text = LogFormatter.format(line) ?: return
+        logArea.append(text + "\n")
         logArea.caretPosition = logArea.document.length
-    }
-
-    private fun summarize(line: String): String {
-        if (line.length <= LOG_LINE_MAX) return line
-        return line.take(LOG_LINE_MAX) + "…"
     }
 
     private fun ui(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)
 
+    /** 조건부 활성 액션을 짧게 만드는 헬퍼 */
+    private fun action(text: String, description: String, enabled: () -> Boolean, run: () -> Unit): AnAction =
+        object : AnAction(text, description, null) {
+            override fun getActionUpdateThread() = com.intellij.openapi.actionSystem.ActionUpdateThread.EDT
+
+            override fun update(e: AnActionEvent) {
+                e.presentation.isEnabled = enabled()
+            }
+
+            override fun actionPerformed(e: AnActionEvent) = run()
+        }
+
     override fun dispose() {
         queue.removeListener(queueListener)
         queue.removeLogListener(logListener)
-    }
-
-    private class TaskCellRenderer : javax.swing.DefaultListCellRenderer() {
-        override fun getListCellRendererComponent(
-            list: javax.swing.JList<*>?,
-            value: Any?,
-            index: Int,
-            isSelected: Boolean,
-            cellHasFocus: Boolean,
-        ): java.awt.Component {
-            val task = value as? TaskEntry
-            val text = task?.let {
-                val chip = when (it.status) {
-                    TaskStatus.TODO -> "todo"
-                    TaskStatus.QUEUED -> "대기"
-                    TaskStatus.RUNNING -> "작업중"
-                    TaskStatus.DONE -> "완료"
-                    TaskStatus.FAILED -> "실패"
-                    TaskStatus.CANCELED -> "취소"
-                }
-                val cost = it.costUsd?.let { c -> "  $%.3f".format(c) } ?: ""
-                val err = it.errorMessage?.let { e -> "  ($e)" } ?: ""
-                val ctx = if (it.status == TaskStatus.RUNNING) "  ${it.finalState}" else ""
-                "[$chip] ${it.shortLabel()}$ctx$cost$err"
-            } ?: value?.toString()
-            return super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus)
-        }
-    }
-
-    companion object {
-        private const val LOG_LINE_MAX = 300
     }
 }
