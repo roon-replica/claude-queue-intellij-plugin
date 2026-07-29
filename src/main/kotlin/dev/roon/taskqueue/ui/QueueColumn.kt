@@ -1,5 +1,6 @@
 package dev.roon.taskqueue.ui
 
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -10,30 +11,39 @@ import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.event.MouseMotionAdapter
 import javax.swing.DefaultListModel
 import javax.swing.Icon
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
 
-/** 칸반 컬럼 하나 — 헤더(제목+개수) + 카드 리스트 */
+/**
+ * 칸반 컬럼 하나 — 헤더(제목+개수) + 카드 리스트.
+ * @param accent 헤더 색. 카드 상태점과 같은 값을 써야 둘의 연결이 읽힌다
+ */
 class QueueColumn(
     title: String,
     private val emptyHint: String,
     highlight: (TaskEntry) -> Float = { 0f },
+    accent: JBColor = StatusColors.TODO,
 ) : JPanel(BorderLayout()) {
 
     val model = DefaultListModel<TaskEntry>()
 
+    /** 마우스가 올라간 행 — 그 카드에만 조작 아이콘을 띄운다 */
+    private var hoverIndex = -1
+
     val list = JBList(model).apply {
         selectionMode = ListSelectionModel.SINGLE_SELECTION
-        cellRenderer = TaskCardRenderer(highlight)
+        cellRenderer = TaskCardRenderer(highlight) { it == hoverIndex }
         emptyText.text = emptyHint
     }
 
     private val header = JBLabel(title).apply {
         font = JBFont.smallOrNewUiMedium().asBold()
         border = JBUI.Borders.empty(4, 6)
+        foreground = accent
     }
 
     /** 이 컬럼에만 해당되는 동작을 헤더 오른쪽에 둔다 (예: 완료 정리) */
@@ -53,6 +63,36 @@ class QueueColumn(
         }
         add(headerRow, BorderLayout.NORTH)
         add(JBScrollPane(list), BorderLayout.CENTER)
+        trackHover()
+    }
+
+    /** 바뀐 두 행만 다시 그린다 — 리스트 전체 repaint 는 낭비다 */
+    private fun trackHover() {
+        list.addMouseMotionListener(object : MouseMotionAdapter() {
+            override fun mouseMoved(e: MouseEvent) = setHover(rowAt(e))
+            override fun mouseDragged(e: MouseEvent) = setHover(rowAt(e))
+        })
+        list.addMouseListener(object : MouseAdapter() {
+            override fun mouseExited(e: MouseEvent) = setHover(-1)
+        })
+    }
+
+    /** 그 행에 조작 아이콘이 실제로 보이는지 — 안 보이는 버튼이 눌리면 안 된다 */
+    fun actionsVisible(index: Int): Boolean = index == hoverIndex || index == list.selectedIndex
+
+    private fun rowAt(e: MouseEvent): Int {
+        val index = list.locationToIndex(e.point)
+        if (index < 0) return -1
+        return if (list.getCellBounds(index, index)?.contains(e.point) == true) index else -1
+    }
+
+    private fun setHover(index: Int) {
+        if (index == hoverIndex) return
+        val previous = hoverIndex
+        hoverIndex = index
+        listOf(previous, index).filter { it >= 0 }.forEach { row ->
+            list.getCellBounds(row, row)?.let { list.repaint(it) }
+        }
     }
 
     /** 헤더 버튼 설정. [enabled] 가 false 면 흐리게 보이고 눌리지 않는다 */

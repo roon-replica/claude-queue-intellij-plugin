@@ -32,6 +32,7 @@ import javax.swing.SwingConstants
  */
 class TaskCardRenderer(
     private val highlight: (TaskEntry) -> Float = { 0f },
+    private val hovered: (Int) -> Boolean = { false },
 ) : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRenderer<TaskEntry> {
 
     private val dot = StatusDot()
@@ -79,30 +80,42 @@ class TaskCardRenderer(
     ): Component {
         val task = value ?: return this
 
-        val base = if (isSelected) list.selectionBackground else list.background
+        val isHover = hovered(index)
+        val plain = if (isSelected) list.selectionBackground else list.background
+        // 마우스가 올라간 행을 살짝 띄운다 — 어떤 카드를 조작하는지 분명해진다
+        val base = if (isSelected || !isHover) plain else blend(plain, list.foreground, HOVER_MIX)
         val fg = if (isSelected) list.selectionForeground else list.foreground
         // 방금 옮겨온 카드는 그 상태 색으로 잠깐 물든다
-        background = blend(base, colorOf(task), highlight(task) * HIGHLIGHT_MAX)
+        background = blend(base, StatusColors.of(task.status), highlight(task) * HIGHLIGHT_MAX)
         isOpaque = true
 
-        dot.color = colorOf(task)
+        dot.color = StatusColors.of(task.status)
         dot.pulsing = task.status == TaskStatus.RUNNING
-        // 실행·수정은 아직 안 올린 항목에만
+
+        // 아이콘은 마우스가 올라갔거나 선택된 카드에만 — 항상 띄우면 어수선하다
+        val showActions = isHover || isSelected
         val isTodo = task.status == TaskStatus.TODO
-        run.isVisible = isTodo
-        edit.isVisible = isTodo
+        run.isVisible = isTodo && showActions
+        edit.isVisible = isTodo && showActions
+        close.isVisible = showActions
 
         val label = task.shortLabel().ifEmpty { "(empty prompt)" }
         // 실행 순서가 의미 있는 항목에만 번호 — 돌고 있거나 끝난 건 순서가 무의미하다
         title.text = if (task.status.isOrdered) "${index + 1}. $label" else label
-        title.foreground = fg
+        // 끝난 작업은 흐리게 — 지금 돌거나 앞으로 돌 작업에 시선이 가게
+        title.foreground = if (task.status.isFinished && !isSelected) JBColor.GRAY else fg
 
         meta.text = metaOf(task)
-        meta.foreground = if (isSelected) fg else JBColor.GRAY
+        meta.foreground = when {
+            isSelected -> fg
+            // 실패 이유는 회색이면 중요하지 않은 정보로 읽힌다
+            task.status == TaskStatus.FAILED -> StatusColors.FAILED
+            else -> JBColor.GRAY
+        }
 
         border = if (task.status == TaskStatus.RUNNING) {
             BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(RUNNING, 0, 2, 0, 0),
+                JBUI.Borders.customLine(StatusColors.RUNNING, 0, 2, 0, 0),
                 JBUI.Borders.empty(4, 4),
             )
         } else {
@@ -160,26 +173,7 @@ class TaskCardRenderer(
         return if (sec < 60) "%.1fs".format(sec) else "%dm %ds".format((sec / 60).toInt(), (sec % 60).toInt())
     }
 
-    /** 두 색을 [ratio] 만큼 섞는다 — 알파 대신 직접 섞어야 리스트 배경과 자연스럽다 */
-    private fun blend(base: Color, tint: Color, ratio: Float): Color {
-        if (ratio <= 0f) return base
-        val r = ratio.coerceIn(0f, 1f)
-        fun mix(a: Int, b: Int) = (a + (b - a) * r).toInt().coerceIn(0, 255)
-        return Color(
-            mix(base.red, tint.red),
-            mix(base.green, tint.green),
-            mix(base.blue, tint.blue),
-        )
-    }
-
-    private fun colorOf(task: TaskEntry): JBColor = when (task.status) {
-        TaskStatus.TODO -> JBColor.GRAY
-        TaskStatus.QUEUED -> QUEUED
-        TaskStatus.RUNNING -> RUNNING
-        TaskStatus.DONE -> DONE
-        TaskStatus.FAILED -> FAILED
-        TaskStatus.CANCELED -> JBColor.GRAY
-    }
+    private fun blend(base: Color, tint: Color, ratio: Float) = StatusColors.blend(base, tint, ratio)
 
     /** 원형 상태 표시 */
     private class StatusDot : JPanel() {
@@ -213,17 +207,15 @@ class TaskCardRenderer(
     }
 
     companion object {
-        // 라이트/다크 양쪽 값을 지정 — 테마에 따라 자동 선택된다
-        private val QUEUED = JBColor(0x3574F0, 0x548AF7)
-        private val RUNNING = JBColor(0x1F8B4C, 0x4CB782)
-        private val DONE = JBColor(0x6E7781, 0x8B949E)
-        private val FAILED = JBColor(0xD1383D, 0xE5534B)
 
         /** 카드 오른쪽 버튼 하나의 폭 — 클릭 판정도 이 값을 쓴다 */
         const val ACTION_WIDTH = 22
 
         /** 잔상이 가장 진할 때의 혼합 비율 — 글자가 묻히지 않을 만큼만 */
         private const val HIGHLIGHT_MAX = 0.45f
+
+        /** 마우스 올린 행의 강조 — 아주 옅게 */
+        private const val HOVER_MIX = 0.07f
 
         private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
         private val DATE_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("M/d HH:mm")

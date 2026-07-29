@@ -59,9 +59,10 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private val strength: (TaskEntry) -> Float = { task -> highlighter.strength(task.id) }
 
-    private val todoColumn = QueueColumn("TODO", "Jot down tasks here", strength)
-    private val activeColumn = QueueColumn("IN PROGRESS", "Runs in order once promoted", strength)
-    private val doneColumn = QueueColumn("DONE", "Finished tasks", strength)
+    private val todoColumn = QueueColumn("TODO", "Jot down tasks here", strength, StatusColors.TODO)
+    private val activeColumn =
+        QueueColumn("IN PROGRESS", "Runs in order once promoted", strength, StatusColors.RUNNING)
+    private val doneColumn = QueueColumn("DONE", "Finished tasks", strength, StatusColors.DONE)
     private val columns: List<QueueColumn> = listOf(todoColumn, activeColumn, doneColumn)
 
     private fun repaintColumns() = columns.forEach { it.list.repaint() }
@@ -202,6 +203,8 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val index = column.list.locationToIndex(e.point).takeIf { it >= 0 } ?: return null
         val bounds = column.list.getCellBounds(index, index) ?: return null
         if (!bounds.contains(e.point)) return null
+        // 아이콘은 마우스 올린·선택된 카드에만 보인다 — 안 보이면 클릭도 없다
+        if (!column.actionsVisible(index)) return null
 
         val task = column.list.model.getElementAt(index)
         val width = JBUI.scale(TaskCardRenderer.ACTION_WIDTH)
