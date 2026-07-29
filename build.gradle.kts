@@ -15,7 +15,18 @@ repositories {
 dependencies {
     intellijPlatform {
         intellijIdeaCommunity(providers.gradleProperty("platformVersion"))
+        // 플랫폼 테스트 프레임워크 미사용 — 순수 로직 테스트라 JUnit5 만으로 충분
+        // (추가하면 com.intellij.tests.JUnit5TestSessionListener 가 테스트 실행을 막는다)
     }
+    testImplementation(kotlin("test"))
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    // 플랫폼 플러그인이 테스트 태스크에 자기 설정을 주입해 JUnit4 클래스를 요구한다
+    testRuntimeOnly("junit:junit:4.13.2")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 intellijPlatform {
