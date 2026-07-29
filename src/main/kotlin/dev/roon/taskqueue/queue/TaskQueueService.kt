@@ -6,7 +6,9 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
 import com.intellij.util.xmlb.annotations.XCollection
+import dev.roon.taskqueue.nav.FileRefs
 import dev.roon.taskqueue.session.SessionState
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -30,6 +32,9 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
 
     /** 실행 중 작업의 최근 출력 — 메모리 누적을 막기 위해 상한을 둔다 */
     private val logBuffer = ArrayDeque<String>()
+
+    /** taskId → 결과에서 뽑은 file:line 참조 */
+    private val refsByTask = mutableMapOf<String, MutableList<FileRefs.Ref>>()
 
     /** 테스트에서 교체 가능 */
     var launcher: TaskLauncher = ClaudeTaskLauncher()
@@ -73,6 +78,21 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
 
     /** 실행 중 작업의 최근 출력 스냅샷 */
     fun recentLog(): List<String> = synchronized(logBuffer) { logBuffer.toList() }
+
+    /** 작업 결과에서 뽑은 file:line 참조 (영속화하지 않는다 — 세션 한정) */
+    fun refs(taskId: String): List<FileRefs.Ref> = synchronized(refsByTask) {
+        refsByTask[taskId]?.toList() ?: emptyList()
+    }
+
+    private fun collectRefs(task: TaskEntry, text: String) {
+        val found = FileRefs.extract(text, File(task.cwd))
+        if (found.isEmpty()) return
+        synchronized(refsByTask) {
+            val list = refsByTask.getOrPut(task.id) { mutableListOf() }
+            found.forEach { if (it !in list) list += it }
+        }
+        notifyChanged()
+    }
 
     private fun appendLog(line: String) {
         synchronized(logBuffer) {
@@ -163,6 +183,7 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         running = launcher.launch(
             task = task,
             onLine = { line -> appendLog(line) },
+            onText = { text -> collectRefs(task, text) },
             onState = { state -> onRunningState(task, state) },
             onDone = { result -> onTaskDone(task, result) },
         )

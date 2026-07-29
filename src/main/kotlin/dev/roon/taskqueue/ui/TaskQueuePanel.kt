@@ -1,8 +1,13 @@
 package dev.roon.taskqueue.ui
 
+import com.intellij.diff.DiffContentFactory
+import com.intellij.diff.DiffManager
+import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
@@ -11,6 +16,9 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import dev.roon.taskqueue.cli.ClaudeCli
+import dev.roon.taskqueue.git.GitDiffs
+import dev.roon.taskqueue.nav.FileNavigator
+import dev.roon.taskqueue.nav.FileRefs
 import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
@@ -37,6 +45,13 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private val downButton = JButton("↓")
     private val pauseButton = JButton("일시정지")
     private val clearButton = JButton("완료 정리")
+    private val diffButton = JButton("변경분 diff")
+
+    private val refsModel = DefaultListModel<FileRefs.Ref>()
+    private val refsList = JBList(refsModel).apply {
+        selectionMode = ListSelectionModel.SINGLE_SELECTION
+        emptyText.text = "결과에서 찾은 file:line 이 여기 표시된다"
+    }
 
     private val statusLabel = JBLabel()
     private val listModel = DefaultListModel<TaskEntry>()
@@ -62,7 +77,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val buttonRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
             add(cancelButton); add(retryButton); add(removeButton)
             add(upButton); add(downButton)
-            add(pauseButton); add(clearButton)
+            add(pauseButton); add(clearButton); add(diffButton)
         }
 
         add(JPanel(BorderLayout()).apply {
@@ -72,9 +87,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }, BorderLayout.NORTH)
 
         add(
-            OnePixelSplitter(false, 0.4f).apply {
+            OnePixelSplitter(false, 0.35f).apply {
                 firstComponent = JBScrollPane(taskList)
-                secondComponent = JBScrollPane(logArea)
+                secondComponent = OnePixelSplitter(true, 0.65f).apply {
+                    firstComponent = JBScrollPane(logArea)
+                    secondComponent = JBScrollPane(refsList)
+                }
             },
             BorderLayout.CENTER,
         )
@@ -88,6 +106,14 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         downButton.addActionListener { selected()?.let { queue.move(it.id, 1) } }
         clearButton.addActionListener { queue.clearFinished() }
         pauseButton.addActionListener { togglePause() }
+        diffButton.addActionListener { showDiffChooser() }
+
+        taskList.addListSelectionListener { refreshRefs() }
+        refsList.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                if (e.clickCount == 2) openSelectedRef()
+            }
+        })
 
         queue.addListener(queueListener)
         queue.addLogListener(logListener)
@@ -143,6 +169,73 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 append(" [${it.finalState}]")
             }
             append("  ·  cwd: ${project.basePath ?: "-"}")
+        }
+
+        refreshRefs()
+    }
+
+    /** 선택 항목의 결과 참조 목록 갱신. 선택이 없으면 실행 중 작업 기준 */
+    private fun refreshRefs() {
+        val task = selected() ?: queue.runningTask()
+        val refs = task?.let { queue.refs(it.id) } ?: emptyList()
+        if (refsModel.elements().toList() == refs) return
+        refsModel.clear()
+        refs.forEach { refsModel.addElement(it) }
+    }
+
+    private fun openSelectedRef() {
+        val ref = refsList.selectedValue ?: return
+        val task = selected() ?: queue.runningTask() ?: return
+        val file = FileRefs.resolve(ref, File(task.cwd))
+        if (!FileNavigator.open(project, file, ref.line)) {
+            statusLabel.text = "열 수 없음: ${file.absolutePath}"
+        }
+    }
+
+    /** 선택 작업의 cwd 기준 변경 파일 목록 → 고르면 IntelliJ diff 뷰어 */
+    private fun showDiffChooser() {
+        val task = selected() ?: queue.runningTask()
+        val cwd = File(task?.cwd ?: project.basePath ?: return)
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            if (!GitDiffs.isGitRepo(cwd)) {
+                ui { statusLabel.text = "git repo 가 아니다: ${cwd.absolutePath}" }
+                return@executeOnPooledThread
+            }
+            val files = GitDiffs.changedFiles(cwd)
+            ui {
+                if (files.isEmpty()) {
+                    statusLabel.text = "변경분 없음 (HEAD 대비)"
+                    return@ui
+                }
+                JBPopupFactory.getInstance()
+                    .createPopupChooserBuilder(files)
+                    .setTitle("변경분 (${files.size}개)")
+                    .setItemChosenCallback { path -> showDiff(cwd, path) }
+                    .createPopup()
+                    .showUnderneathOf(diffButton)
+            }
+        }
+    }
+
+    private fun showDiff(cwd: File, path: String) {
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val before = GitDiffs.contentAtHead(cwd, path)
+            ui {
+                val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(File(cwd, path))
+                if (vf == null) {
+                    statusLabel.text = "파일을 찾을 수 없다: $path"
+                    return@ui
+                }
+                val factory = DiffContentFactory.getInstance()
+                val left = if (before != null) factory.create(project, before, vf.fileType)
+                else factory.createEmpty()
+                val right = factory.create(project, vf)
+                DiffManager.getInstance().showDiff(
+                    project,
+                    SimpleDiffRequest(path, left, right, if (before != null) "HEAD" else "(신규)", "작업 후"),
+                )
+            }
         }
     }
 

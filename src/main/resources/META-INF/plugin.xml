@@ -9,4 +9,15 @@
         <applicationService serviceImplementation="dev.roon.taskqueue.session.SessionWatcher"/>
         <applicationService serviceImplementation="dev.roon.taskqueue.queue.TaskQueueService"/>
     </extensions>
+
+    <actions>
+        <action id="TaskQueue.EnqueueSelection"
+                class="dev.roon.taskqueue.actions.EnqueueSelectionAction"
+                text="작업 큐에 추가"
+                description="선택 영역 또는 파일을 자동작업으로 큐잉">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="control alt shift Q"/>
+        </action>
+    </actions>
 </idea-plugin>

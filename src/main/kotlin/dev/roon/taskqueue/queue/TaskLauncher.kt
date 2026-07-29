@@ -23,6 +23,8 @@ interface TaskLauncher {
     fun launch(
         task: TaskEntry,
         onLine: (String) -> Unit,
+        /** 모델이 낸 사람용 텍스트 — file:line 추출 대상 */
+        onText: (String) -> Unit,
         onState: (SessionState) -> Unit,
         onDone: (TaskResult) -> Unit,
     ): RunningTask
