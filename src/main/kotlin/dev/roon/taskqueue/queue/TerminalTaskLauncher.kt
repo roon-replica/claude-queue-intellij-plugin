@@ -91,16 +91,22 @@ class TerminalTaskLauncher(
                 }
 
                 widget.requestFocus()
-                widget.executeWithTtyConnector { connector ->
-                    runCatching { connector.write(payload + "\r") }
-                        .onFailure { onLine("· 전송 실패: ${it.message}") }
+                if (reuse) {
+                    // 이미 claude 가 도는 탭 → 그 입력창에 프롬프트를 넣는다
+                    widget.executeWithTtyConnector { connector ->
+                        runCatching { connector.write(payload + "\r") }
+                            .onFailure { onLine("· 전송 실패: ${it.message}") }
+                    }
+                    onLine("› ${singleLine(task.prompt).take(120)}")
+                } else {
+                    // 새 셸 → executeCommand 가 프롬프트 준비를 기다렸다 실행한다
+                    // (TTY 직접 쓰기는 셸 초기화 중이면 유실된다)
+                    onLine("$ $payload")
+                    runCatching { widget.executeCommand(payload) }
+                        .onFailure { onLine("· 명령 실행 실패: ${it.message}") }
                 }
 
                 onState(SessionState.WORKING)
-                onLine(
-                    if (reuse) "› ${singleLine(task.prompt).take(120)}"
-                    else "$ claude (세션 ${sessionId.take(8)}, Stop 훅 심음)"
-                )
             } catch (e: Exception) {
                 running.cancel()
                 onDone(TaskResult(-1, SessionState.UNKNOWN, null, "터미널 실행 실패: ${e.message}"))
