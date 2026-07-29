@@ -50,11 +50,19 @@ class TerminalTaskLauncher(
         ApplicationManager.getApplication().invokeLater {
             if (running.canceled) return@invokeLater
             try {
+                val allTitles = openTitles(project)
+                onLine("· 열린 탭: ${allTitles.joinToString(", ").ifEmpty { "(없음)" }}")
+
                 val existing = findExistingTab(project, task.terminalTab)
+                onLine(
+                    if (existing != null) "· 기존 탭 사용: ${task.terminalTab}"
+                    else "· 새 탭 생성 (요청=${task.terminalTab.ifEmpty { "새 터미널" }})"
+                )
                 val widget = existing ?: createTab(project, task)
 
                 // 이미 claude 가 돌고 있는 탭이면 셸 명령이 아니라 프롬프트를 넣어야 한다
                 val claudeRunning = existing != null && hasRunningCommand(existing)
+                onLine("· 그 탭에서 명령 실행 중: $claudeRunning")
                 val payload = if (claudeRunning) singleLine(task.prompt) else command
 
                 if (claudeRunning && payload != task.prompt) {
@@ -64,7 +72,9 @@ class TerminalTaskLauncher(
                 widget.requestFocus()
                 // 연결될 때까지 기다렸다 쓴다 — sendCommandToExecute 는 셸 준비 전이면 유실된다
                 widget.executeWithTtyConnector { connector ->
-                    connector.write(payload + "\r")
+                    onLine("· TTY 연결됨 — 전송 (${payload.length}자)")
+                    runCatching { connector.write(payload + "\r") }
+                        .onFailure { onLine("· 전송 실패: ${it.message}") }
                 }
                 onLine(if (claudeRunning) "› ${singleLine(task.prompt).take(120)}" else "$ $command")
 
@@ -90,6 +100,13 @@ class TerminalTaskLauncher(
         return TerminalToolWindowManager.getInstance(project)
             .createLocalShellWidget(task.cwd, tabName, true)
     }
+
+    private fun openTitles(project: Project): List<String> =
+        runCatching {
+            TerminalToolWindowManager.getInstance(project).widgets
+                .filterIsInstance<ShellTerminalWidget>()
+                .map { titleOf(it) }
+        }.getOrDefault(emptyList())
 
     private fun hasRunningCommand(widget: ShellTerminalWidget): Boolean =
         runCatching { widget.hasRunningCommands() }.getOrDefault(false)
@@ -131,6 +148,9 @@ class TerminalTaskLauncher(
                 onLine("· 세션 감지: ${task.sessionId}")
                 startWatch(task, found, 0, running, onState, onDone)
                 return@Runnable
+            }
+            if ((System.currentTimeMillis() - launchedAt) % 5_000 < BIND_POLL_MS) {
+                onLine("· 세션 파일 대기 중… (${SessionPaths.projectDir(task.cwd).absolutePath})")
             }
             if (System.currentTimeMillis() > deadline) {
                 onDone(TaskResult(-1, SessionState.UNKNOWN, null, "세션 파일을 찾지 못했다 (터미널 실행 확인 필요)"))
