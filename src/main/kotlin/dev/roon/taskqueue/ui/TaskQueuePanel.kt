@@ -3,8 +3,10 @@ package dev.roon.taskqueue.ui
 import com.intellij.diff.DiffContentFactory
 import com.intellij.diff.DiffManager
 import com.intellij.diff.requests.SimpleDiffRequest
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -33,6 +35,7 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
 import javax.swing.DefaultListModel
+import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
@@ -117,33 +120,47 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private fun buildToolbar(): JPanel {
         val group = DefaultActionGroup().apply {
-            add(action("▶ 실행", "선택한 todo 를 진행줄로", { selected()?.let { !it.status.isActive } == true }) {
+            add(action("실행", "선택한 todo 를 진행줄로 올린다", AllIcons.Actions.Execute,
+                { selected()?.let { !it.status.isActive } == true }) {
                 selected()?.let { queue.promote(it.id) }
             })
-            add(action("▶▶ 전부", "todo 전부를 진행줄로", { queue.todos().isNotEmpty() }) {
+            add(action("todo 전부 실행", "todo 전부를 진행줄로", AllIcons.Actions.RunAll,
+                { queue.todos().isNotEmpty() }) {
                 queue.runAllTodos()
             })
-            add(action("↩ todo", "진행 대기 항목을 todo 로", { selected()?.status == TaskStatus.QUEUED }) {
+            add(action("todo 로 되돌리기", "진행 대기 항목을 todo 로", AllIcons.Actions.Rollback,
+                { selected()?.status == TaskStatus.QUEUED }) {
                 selected()?.let { queue.demote(it.id) }
             })
             addSeparator()
-            add(action("■ 취소", "실행 중 작업 중단", { queue.runningTask() != null }) {
+            add(action("실행 중단", "실행 중 작업 취소", AllIcons.Actions.Suspend,
+                { queue.runningTask() != null }) {
                 queue.cancelRunning()
             })
-            add(action("↻ 재시도", "실패/취소 항목 다시 실행", { selected()?.status?.isFinished == true }) {
+            add(action("재시도", "실패·취소 항목 다시 실행", AllIcons.Actions.Restart,
+                { selected()?.status?.isFinished == true }) {
                 selected()?.let { queue.retry(it.id) }
             })
             addSeparator()
-            add(action("↑", "순서 올리기", { selected() != null }) { selected()?.let { queue.move(it.id, -1) } })
-            add(action("↓", "순서 내리기", { selected() != null }) { selected()?.let { queue.move(it.id, 1) } })
+            add(action("위로", "순서 올리기", AllIcons.Actions.MoveUp, { selected() != null }) {
+                selected()?.let { queue.move(it.id, -1) }
+            })
+            add(action("아래로", "순서 내리기", AllIcons.Actions.MoveDown, { selected() != null }) {
+                selected()?.let { queue.move(it.id, 1) }
+            })
             addSeparator()
-            add(action("일시정지/재개", "자동 진행 토글", { true }) { togglePause() })
-            add(action("완료 정리", "완료·실패 항목 제거", { queue.tasks.any { it.status.isFinished } }) {
+            add(PauseResumeAction())
+            add(action("변경분 diff", "HEAD 대비 변경 파일 보기", AllIcons.Actions.Diff, { true }) {
+                showDiffChooser()
+            })
+            addSeparator()
+            add(action("완료 정리", "완료·실패 항목 제거", AllIcons.Actions.GC,
+                { queue.tasks.any { it.status.isFinished } }) {
                 queue.clearFinished()
             })
-            add(action("변경분 diff", "HEAD 대비 변경 파일 보기", { true }) { showDiffChooser() })
-            addSeparator()
-            add(action("× 삭제", "항목 제거", { selected() != null }) { selected()?.let { queue.remove(it.id) } })
+            add(action("삭제", "선택 항목 제거", AllIcons.General.Remove, { selected() != null }) {
+                selected()?.let { queue.remove(it.id) }
+            })
         }
 
         val toolbar: ActionToolbar = ActionManager.getInstance()
@@ -336,9 +353,15 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun ui(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)
 
     /** 조건부 활성 액션을 짧게 만드는 헬퍼 */
-    private fun action(text: String, description: String, enabled: () -> Boolean, run: () -> Unit): AnAction =
-        object : AnAction(text, description, null) {
-            override fun getActionUpdateThread() = com.intellij.openapi.actionSystem.ActionUpdateThread.EDT
+    private fun action(
+        text: String,
+        description: String,
+        icon: Icon,
+        enabled: () -> Boolean,
+        run: () -> Unit,
+    ): AnAction =
+        object : AnAction(text, description, icon) {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
 
             override fun update(e: AnActionEvent) {
                 e.presentation.isEnabled = enabled()
@@ -346,6 +369,19 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
             override fun actionPerformed(e: AnActionEvent) = run()
         }
+
+    /** 상태에 따라 아이콘·문구가 바뀌는 토글 */
+    private inner class PauseResumeAction : AnAction() {
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+
+        override fun update(e: AnActionEvent) {
+            val paused = !queue.autoAdvance
+            e.presentation.icon = if (paused) AllIcons.Actions.Resume else AllIcons.Actions.Pause
+            e.presentation.text = if (paused) "자동 진행 재개" else "자동 진행 일시정지"
+        }
+
+        override fun actionPerformed(e: AnActionEvent) = togglePause()
+    }
 
     override fun dispose() {
         queue.removeListener(queueListener)
