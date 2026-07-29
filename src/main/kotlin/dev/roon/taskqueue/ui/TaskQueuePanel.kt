@@ -1,8 +1,5 @@
 package dev.roon.taskqueue.ui
 
-import com.intellij.diff.DiffContentFactory
-import com.intellij.diff.DiffManager
-import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionManager
@@ -15,8 +12,6 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.OnePixelSplitter
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
@@ -26,7 +21,6 @@ import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import dev.roon.taskqueue.cli.ClaudeCli
-import dev.roon.taskqueue.git.GitDiffs
 import dev.roon.taskqueue.nav.FileNavigator
 import dev.roon.taskqueue.nav.FileRefs
 import dev.roon.taskqueue.queue.ExecMode
@@ -58,11 +52,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         emptyText.text = "작업 내용 입력 후 Enter — todo 로 추가된다"
     }
 
-    /** 레인 = 이어 쓸 대화. NEW_SESSION 은 매 작업 독립 세션 */
-    private val laneCombo = ComboBox<String>().apply {
-        addItem(NEW_SESSION)
-        toolTipText = "같은 레인의 작업은 한 대화를 이어 쓴다 (앞 작업을 기억)"
-    }
 
     /** 실행할 터미널 탭 — 열린 탭을 고르거나 새로 만든다 */
     private val terminalCombo = ComboBox<String>().apply {
@@ -167,17 +156,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             })
             addSeparator()
             add(PauseResumeAction())
-            add(action("변경분 diff", "HEAD 대비 변경 파일 보기", AllIcons.Actions.Diff, { true }) {
-                showDiffChooser()
-            })
-            addSeparator()
-            add(action("레인 추가", "이름을 붙인 대화 레인을 만든다", AllIcons.General.Add, { true }) {
-                createLane()
-            })
-            add(action("레인 초기화", "선택한 레인의 대화를 끊고 새로 시작", AllIcons.Actions.Restart,
-                { currentLane().isNotEmpty() }) {
-                resetLane()
-            })
             addSeparator()
             add(action("완료 정리", "완료·실패 항목 제거", AllIcons.Actions.GC,
                 { queue.tasks.any { it.status.isFinished } }) {
@@ -195,8 +173,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val inputRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
             add(promptField, BorderLayout.CENTER)
             add(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-                add(JBLabel("레인").apply { font = JBFont.small() })
-                add(laneCombo)
                 add(JBLabel("터미널").apply { font = JBFont.small() })
                 add(terminalCombo)
             }, BorderLayout.EAST)
@@ -272,7 +248,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun addTodo() {
         val prompt = promptField.text?.trim().orEmpty()
         if (prompt.isEmpty()) return
-        queue.addTodo(prompt, cwd(), currentLane(), ExecMode.TERMINAL, currentTerminal())
+        queue.addTodo(prompt, cwd(), ExecMode.TERMINAL, currentTerminal())
         promptField.text = ""
     }
 
@@ -301,42 +277,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun cwd(): String =
         project.basePath ?: File(System.getProperty("user.home")).absolutePath
 
-    /** 선택된 레인 이름. 빈 문자열이면 독립 세션 */
-    private fun currentLane(): String =
-        (laneCombo.selectedItem as? String)?.takeIf { it != NEW_SESSION }.orEmpty()
-
-    private fun createLane() {
-        val name = Messages.showInputDialog(
-            project,
-            "레인 이름 — 같은 레인의 작업들이 한 대화를 이어 씁니다.",
-            "레인 추가",
-            null,
-        )?.trim().orEmpty()
-        if (name.isEmpty() || name == NEW_SESSION) return
-        if ((0 until laneCombo.itemCount).none { laneCombo.getItemAt(it) == name }) {
-            laneCombo.addItem(name)
-        }
-        laneCombo.selectedItem = name
-    }
-
-    private fun resetLane() {
-        val lane = currentLane()
-        if (lane.isEmpty()) return
-        queue.resetLane(cwd(), lane)
-        statusLabel.text = "레인 '$lane' 초기화 — 다음 실행부터 새 대화"
-    }
-
-    /** 저장된 레인을 콤보에 채운다 (선택은 유지) */
-    private fun refreshLanes() {
-        val saved = queue.lanes(cwd())
-        val current = laneCombo.selectedItem as? String
-        val existing = (0 until laneCombo.itemCount).map { laneCombo.getItemAt(it) }
-        val missing = saved.filter { it !in existing }
-        if (missing.isEmpty()) return
-        missing.forEach { laneCombo.addItem(it) }
-        if (current != null) laneCombo.selectedItem = current
-    }
-
     private fun togglePause() {
         if (queue.autoAdvance) queue.pause() else queue.start()
         refresh()
@@ -360,7 +300,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     private fun refresh() {
-        refreshLanes()
         refreshTerminals()
         val all = queue.tasks
         todoColumn.setTasks(all.filter { it.status == TaskStatus.TODO })
@@ -394,51 +333,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
     }
 
-    private fun showDiffChooser() {
-        val task = selected() ?: queue.runningTask()
-        val cwd = File(task?.cwd ?: project.basePath ?: return)
-
-        ApplicationManager.getApplication().executeOnPooledThread {
-            if (!GitDiffs.isGitRepo(cwd)) {
-                ui { statusLabel.text = "git repo 가 아니다: ${cwd.absolutePath}" }
-                return@executeOnPooledThread
-            }
-            val files = GitDiffs.changedFiles(cwd)
-            ui {
-                if (files.isEmpty()) {
-                    statusLabel.text = "변경분 없음 (HEAD 대비)"
-                    return@ui
-                }
-                JBPopupFactory.getInstance()
-                    .createPopupChooserBuilder(files)
-                    .setTitle("변경분 (${files.size}개)")
-                    .setItemChosenCallback { path -> showDiff(cwd, path) }
-                    .createPopup()
-                    .showInCenterOf(this)
-            }
-        }
-    }
-
-    private fun showDiff(cwd: File, path: String) {
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val before = GitDiffs.contentAtHead(cwd, path)
-            ui {
-                val vf = LocalFileSystem.getInstance().refreshAndFindFileByIoFile(File(cwd, path))
-                if (vf == null) {
-                    statusLabel.text = "파일을 찾을 수 없다: $path"
-                    return@ui
-                }
-                val factory = DiffContentFactory.getInstance()
-                val left = if (before != null) factory.create(project, before, vf.fileType)
-                else factory.createEmpty()
-                val right = factory.create(project, vf)
-                DiffManager.getInstance().showDiff(
-                    project,
-                    SimpleDiffRequest(path, left, right, if (before != null) "HEAD" else "(신규)", "작업 후"),
-                )
-            }
-        }
-    }
 
     /** 원시 stream-json 대신 사람이 읽는 한 줄로 */
     private fun appendLog(line: String) {
@@ -450,7 +344,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun ui(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)
 
     private companion object {
-        const val NEW_SESSION = "새 세션"
         const val NEW_TERMINAL = "새 터미널"
     }
 

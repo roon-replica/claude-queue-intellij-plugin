@@ -87,7 +87,7 @@ class TerminalTaskLauncher(
     }
 
     private fun createTab(project: Project, task: TaskEntry): ShellTerminalWidget {
-        val tabName = task.terminalTab.ifEmpty { task.lane.ifEmpty { task.shortLabel().take(20) } }
+        val tabName = task.terminalTab.ifEmpty { task.shortLabel().take(20) }
         return TerminalToolWindowManager.getInstance(project)
             .createLocalShellWidget(task.cwd, tabName, true)
     }
