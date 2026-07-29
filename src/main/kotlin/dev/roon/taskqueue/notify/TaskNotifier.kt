@@ -4,6 +4,7 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.ui.SystemNotifications
 import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskStatus
 import java.io.File
@@ -56,7 +57,14 @@ object TaskNotifier : TaskNotifications {
         notify("Task queue finished", body, type, cwd)
     }
 
+    /**
+     * OS 알림으로 띄우고, IDE 쪽에는 Event Log 기록만 남긴다.
+     *
+     * IDE 풍선은 작업하는 화면 위로 튀어나와 거슬린다. 반면 OS 알림은 IDE 가
+     * 뒤에 있어도 보이므로, 자리를 비운 사이 큐가 도는 이 플러그인에 더 맞다.
+     */
     private fun notify(title: String, body: String, type: NotificationType, cwd: String) {
+        runCatching { SystemNotifications.getInstance().notify(GROUP, title, body) }
         runCatching {
             NotificationGroupManager.getInstance()
                 .getNotificationGroup(GROUP)

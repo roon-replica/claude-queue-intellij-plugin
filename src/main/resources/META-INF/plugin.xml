@@ -16,8 +16,12 @@
     ]]></description>
 
     <extensions defaultExtensionNs="com.intellij">
-        <!-- 알림 설정 화면에서 유저가 끄거나 OS 알림으로 바꿀 수 있게 그룹으로 등록 -->
-        <notificationGroup id="Task Queue" displayType="BALLOON"/>
+        <!--
+          NONE = IDE 풍선을 띄우지 않는다. 알림은 OS(맥 알림 센터)로 보내고
+          여기서는 Event Log 에 기록만 남긴다 — 화면 위로 튀어나오는 풍선은 거슬린다.
+          유저가 원하면 설정 → Notifications 에서 풍선을 다시 켤 수 있다.
+        -->
+        <notificationGroup id="Task Queue" displayType="NONE"/>
         <toolWindow id="Task Queue"
                     anchor="bottom"
                     icon="dev.roon.taskqueue.ui.TaskQueueIcons.ToolWindow"
