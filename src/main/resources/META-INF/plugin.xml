@@ -17,6 +17,14 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.3.0</h4>
+        <ul>
+          <li>Finished cards show claude's answer, so you don't have to open the terminal
+              to see what happened. Notifications carry it too.</li>
+          <li>Running cards show elapsed time, updated every second.</li>
+          <li>Keyboard shortcuts on the board: Delete to remove, Cmd+Enter to run, F2 to edit.</li>
+          <li>Notifications go to the OS notification center instead of an IDE popup.</li>
+        </ul>
         <h4>0.2.0</h4>
         <ul>
           <li>Run a task in any terminal tab — a new one, one the plugin opened, or a shell you
