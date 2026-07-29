@@ -24,7 +24,7 @@ import dev.roon.taskqueue.queue.ExecMode
 import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
-import dev.roon.taskqueue.terminal.TerminalSessionRegistry
+import dev.roon.taskqueue.terminal.TerminalTabs
 import dev.roon.taskqueue.terminal.TerminalTabFocuser
 import java.awt.BorderLayout
 import java.awt.event.MouseAdapter
@@ -209,37 +209,26 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
      * @param onChosen 선택된 탭 이름 ("" = 새 탭)
      */
     private fun chooseTerminal(onChosen: (String) -> Unit) {
-        val tabs = openTerminals()
+        val tabs = TerminalTabs.list(project)
         if (tabs.isEmpty()) {
             onChosen("")
             return
         }
 
-        val items = listOf(NEW_TERMINAL) + tabs.map { it.label }
+        val items = listOf(NEW_TERMINAL) + tabs.map { it.display }
         JBPopupFactory.getInstance()
             .createPopupChooserBuilder(items)
             .setTitle("실행할 터미널")
             .setMovable(false)
             .setResizable(false)
             .setItemChosenCallback { chosen ->
-                val tab = tabs.firstOrNull { it.label == chosen }?.name ?: ""
+                // 고른 탭을 레지스트리에 고정한다 — 제목이 바뀌어도 위젯 참조로 찾는다
+                val tab = tabs.firstOrNull { it.display == chosen }?.let(TerminalTabs::pin) ?: ""
                 onChosen(tab)
             }
             .createPopup()
             .showInBestPositionFor(DataManager.getInstance().getDataContext(this))
     }
-
-    /**
-     * 이어 쓸 수 있는 터미널 = **우리가 띄운 탭**뿐이다.
-     * 외부 탭에는 Stop 훅을 심을 수 없어 완료를 알 수 없으므로 후보에서 제외한다.
-     */
-    private fun openTerminals(): List<TerminalChoice> = runCatching {
-        TerminalSessionRegistry.getInstance().aliveTabs().map {
-            TerminalChoice(it.label, "${it.label}  (이어서 대화 — 세션 ${it.sessionId.take(8)})")
-        }
-    }.getOrDefault(emptyList())
-
-    private data class TerminalChoice(val name: String, val label: String)
 
     private fun togglePause() {
         if (queue.autoAdvance) queue.pause() else queue.start()
