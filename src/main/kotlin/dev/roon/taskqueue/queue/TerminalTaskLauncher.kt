@@ -7,6 +7,7 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import dev.roon.taskqueue.cli.ClaudeCli
 import dev.roon.taskqueue.hook.StopHookWatcher
 import dev.roon.taskqueue.session.SessionState
+import dev.roon.taskqueue.terminal.TerminalSessionRegistry
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 import java.io.File
@@ -24,6 +25,7 @@ import java.util.concurrent.TimeUnit
 class TerminalTaskLauncher(
     private val cliProvider: () -> ClaudeCli = { ClaudeCli.getInstance() },
     private val hookProvider: () -> StopHookWatcher = { StopHookWatcher.getInstance() },
+    private val registryProvider: () -> TerminalSessionRegistry = { TerminalSessionRegistry.getInstance() },
 ) : TaskLauncher {
 
     override fun launch(
@@ -43,21 +45,23 @@ class TerminalTaskLauncher(
         ApplicationManager.getApplication().invokeLater {
             if (running.canceled) return@invokeLater
             try {
-                val existing = findExistingTab(project, task.terminalTab)
-                val reuse = existing != null && hasRunningCommand(existing)
+                val registry = registryProvider()
+                // 세션 ID 는 작업이 아니라 탭에 딸린 값 — 같은 탭이면 그 탭의 claude 가 처리한다
+                val known = task.terminalTab.takeIf { it.isNotEmpty() }?.let { registry.find(it) }
 
-                // 이미 도는 세션에는 훅을 심을 수 없다 — 우리가 띄운 세션이어야 판정이 가능하다
-                if (reuse && task.hookSessionId.isEmpty()) {
+                // 우리가 띄우지 않은 탭에는 훅을 심을 수 없어 완료를 알 수 없다
+                if (task.terminalTab.isNotEmpty() && known == null) {
                     onDone(
                         TaskResult(
                             -1, SessionState.UNKNOWN, null,
-                            "외부 세션이라 완료 판정 불가 — 새 터미널로 실행해야 한다",
+                            "외부 터미널이라 완료 판정 불가 — 새 터미널로 실행해야 한다",
                         )
                     )
                     return@invokeLater
                 }
 
-                val sessionId = task.hookSessionId.ifEmpty { UUID.randomUUID().toString() }
+                val reuse = known != null
+                val sessionId = known?.sessionId ?: UUID.randomUUID().toString()
                 task.sessionId = sessionId
                 task.hookSessionId = sessionId
 
@@ -65,7 +69,7 @@ class TerminalTaskLauncher(
                     if (reuse) singleLine(task.prompt)
                     else buildCommand(exe, sessionId, hooks.hookCommand(), writePromptFile(task))
 
-                val widget = existing ?: createTab(project, task)
+                val widget = known?.widget ?: createTab(project, task, registry, sessionId)
                 val sentAt = System.currentTimeMillis()
 
                 // 전송 전에 구독해야 빠른 응답의 Stop 을 놓치지 않는다
@@ -108,24 +112,20 @@ class TerminalTaskLauncher(
 
     // --- 터미널 ---
 
-    private fun findExistingTab(project: Project, tabName: String): ShellTerminalWidget? {
-        if (tabName.isEmpty()) return null
-        return TerminalToolWindowManager.getInstance(project).widgets
-            .filterIsInstance<ShellTerminalWidget>()
-            .firstOrNull { titleOf(it) == tabName }
+    /** 새 탭을 만들고 레지스트리에 등록한다 — 이후 작업이 이 탭을 골라 이어 쓸 수 있게 */
+    private fun createTab(
+        project: Project,
+        task: TaskEntry,
+        registry: TerminalSessionRegistry,
+        sessionId: String,
+    ): ShellTerminalWidget {
+        val label = registry.uniqueLabel(task.shortLabel().take(20).ifEmpty { "claude" })
+        val widget = TerminalToolWindowManager.getInstance(project)
+            .createLocalShellWidget(task.cwd, label, true)
+        registry.register(label, widget, sessionId)
+        task.terminalTab = label
+        return widget
     }
-
-    private fun createTab(project: Project, task: TaskEntry): ShellTerminalWidget {
-        val tabName = task.terminalTab.ifEmpty { task.shortLabel().take(20) }
-        return TerminalToolWindowManager.getInstance(project)
-            .createLocalShellWidget(task.cwd, tabName, true)
-    }
-
-    private fun hasRunningCommand(widget: ShellTerminalWidget): Boolean =
-        runCatching { widget.hasRunningCommands() }.getOrDefault(false)
-
-    private fun titleOf(widget: ShellTerminalWidget): String =
-        runCatching { widget.terminalTitle.buildTitle() }.getOrDefault("")
 
     /** 대화형 입력은 개행이 곧 전송이라 한 줄로 만든다 */
     private fun singleLine(text: String): String =

@@ -24,8 +24,7 @@ import dev.roon.taskqueue.queue.ExecMode
 import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
-import org.jetbrains.plugins.terminal.ShellTerminalWidget
-import org.jetbrains.plugins.terminal.TerminalToolWindowManager
+import dev.roon.taskqueue.terminal.TerminalSessionRegistry
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.event.MouseAdapter
@@ -235,17 +234,14 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             .showInBestPositionFor(DataManager.getInstance().getDataContext(this))
     }
 
-    /** 열린 터미널 탭 — claude 가 돌고 있으면 표시에 붙인다 */
+    /**
+     * 이어 쓸 수 있는 터미널 = **우리가 띄운 탭**뿐이다.
+     * 외부 탭에는 Stop 훅을 심을 수 없어 완료를 알 수 없으므로 후보에서 제외한다.
+     */
     private fun openTerminals(): List<TerminalChoice> = runCatching {
-        TerminalToolWindowManager.getInstance(project).widgets
-            .filterIsInstance<ShellTerminalWidget>()
-            .mapNotNull { widget ->
-                val name = runCatching { widget.terminalTitle.buildTitle() }.getOrNull()?.takeIf { it.isNotBlank() }
-                    ?: return@mapNotNull null
-                val busy = runCatching { widget.hasRunningCommands() }.getOrDefault(false)
-                TerminalChoice(name, if (busy) "$name  (실행 중 — 그 대화에 프롬프트 전달)" else name)
-            }
-            .distinctBy { it.name }
+        TerminalSessionRegistry.getInstance().aliveTabs().map {
+            TerminalChoice(it.label, "${it.label}  (이어서 대화 — 세션 ${it.sessionId.take(8)})")
+        }
     }.getOrDefault(emptyList())
 
     private data class TerminalChoice(val name: String, val label: String)
