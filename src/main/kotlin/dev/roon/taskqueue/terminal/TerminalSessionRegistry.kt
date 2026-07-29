@@ -4,6 +4,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.util.Disposer
 import com.intellij.terminal.JBTerminalWidget
+import com.jediterm.terminal.ProcessTtyConnector
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
 
 /**
@@ -49,11 +50,27 @@ class TerminalSessionRegistry {
             get() = runCatching { widget.ttyConnector?.isConnected == true }.getOrDefault(false)
 
         /**
-         * 그 탭에서 무언가 돌고 있는지. claude 가 켜져 있으면 true.
-         * 판단 불가면 null — 그때는 "돌고 있다" 고 보수적으로 다룬다.
+         * 그 탭에서 무언가 돌고 있는지. **셸 통합이 없으면 예외가 나 null 이 된다** —
+         * null 을 "돌고 있다" 로 해석하면 빈 셸에 프롬프트를 타이핑하게 되므로 주의해야 한다.
          */
         fun hasRunningCommand(): Boolean? =
             runCatching { shell?.hasRunningCommands() }.getOrNull()
+
+        /**
+         * 이 탭에서 **claude 가 실제로 돌고 있는지** 프로세스 트리로 확인한다.
+         *
+         * `hasRunningCommands()` 는 셸 통합에 의존해 답을 못 낼 때가 있다. 그때 추측하면
+         * 자연어 프롬프트가 셸 명령으로 실행되는 사고가 난다(실측) — 그래서 사실을 본다.
+         *
+         * @return null = 프로세스를 들여다볼 수 없음
+         */
+        fun claudeRunning(): Boolean? = runCatching {
+            val connector = widget.ttyConnector ?: return null
+            val shellProcess = (connector as? ProcessTtyConnector)?.process ?: return null
+            shellProcess.toHandle().descendants().anyMatch { handle ->
+                handle.info().command().orElse("").contains(CLAUDE_MARKER)
+            }
+        }.getOrNull()
     }
 
     /** 같은 물리 탭이 두 번 등록되지 않게 위젯 기준으로도 지운다 */
@@ -109,6 +126,9 @@ class TerminalSessionRegistry {
     }.getOrDefault(false)
 
     companion object {
+        /** claude 실행 파일 경로에 항상 들어가는 조각 (버전 디렉토리 포함) */
+        private const val CLAUDE_MARKER = "claude"
+
         fun getInstance(): TerminalSessionRegistry = service()
     }
 }

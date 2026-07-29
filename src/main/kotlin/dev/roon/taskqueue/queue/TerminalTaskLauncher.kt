@@ -77,18 +77,26 @@ class TerminalTaskLauncher(
                 awaitTabReady(project, known, running, onLine, onDone) { tab ->
                     val sentAt = System.currentTimeMillis()
                     when {
-                        // 셸만 떠 있는 탭 — 프롬프트를 타이핑하면 셸에 그대로 들어간다.
-                        // 대신 그 탭에서 우리가 claude 를 띄운다 → 훅을 심을 수 있다
-                        !tab.ours && tab.hasRunningCommand() == false ->
-                            startClaudeInTab(tab, exe, task, registry, hooks, sentAt, running, onLine, onState, onDone)
+                        // 우리 탭 재사용 — 심어둔 훅이 이 턴의 완료를 알린다
+                        tab.ours ->
+                            runOnOurTab(tab, task, hooks, sentAt, running, onLine, onState, onDone)
 
-                        // claude 가 이미 도는 외부 탭 — 훅이 없으므로 jsonl 로 판정한다
-                        !tab.ours ->
+                        // claude 가 확실히 도는 탭 — 프롬프트를 그 입력창에 넣는다
+                        tab.claudeRunning() == true ->
                             runOnExternalTab(tab, task, sentAt, running, onLine, onState, onDone)
 
-                        // 우리 탭 재사용 — 심어둔 훅이 이 턴의 완료를 알린다
+                        // claude 는 아닌데 뭔가 돌고 있다 — 남의 작업 위에 프롬프트를 쏘면 안 된다
+                        tab.hasRunningCommand() == true -> onDone(
+                            TaskResult(
+                                -1, SessionState.UNKNOWN, null,
+                                "That tab is busy running something else — pick another terminal",
+                            )
+                        )
+
+                        // 셸만 떠 있다 → 우리가 claude 를 띄운다. 프롬프트를 타이핑하면
+                        // 자연어가 셸 명령으로 실행되므로, 확신이 없을 때의 기본값도 이쪽이다
                         else ->
-                            runOnOurTab(tab, task, hooks, sentAt, running, onLine, onState, onDone)
+                            startClaudeInTab(tab, exe, task, registry, hooks, sentAt, running, onLine, onState, onDone)
                     }
                 }
             } catch (e: Exception) {

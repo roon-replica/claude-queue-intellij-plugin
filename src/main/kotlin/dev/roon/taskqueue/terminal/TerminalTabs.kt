@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.terminal.JBTerminalWidget
 import com.intellij.ui.content.Content
+import com.jediterm.terminal.ProcessTtyConnector
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 
@@ -21,9 +22,21 @@ object TerminalTabs {
         /** 이미 등록된 탭이면 그 정보 — 없으면 고를 때 등록한다 */
         val registered: TerminalSessionRegistry.Tab?,
     ) {
-        /** 셸만 떠 있으면 우리가 claude 를 띄운다 — 무언가 돌고 있으면 claude 로 본다 */
-        private val idleShell: Boolean
-            get() = runCatching { (widget as? ShellTerminalWidget)?.hasRunningCommands() == false }
+        /**
+         * claude 가 실제로 도는지 프로세스 트리로 본다 — 런처와 **같은 판별**을 써야
+         * 팔레트 라벨과 실제 동작이 어긋나지 않는다.
+         */
+        private val claudeRunning: Boolean
+            get() = runCatching {
+                val connector = widget.ttyConnector ?: return false
+                val shellProcess = (connector as? ProcessTtyConnector)?.process ?: return false
+                shellProcess.toHandle().descendants().anyMatch { handle ->
+                    handle.info().command().orElse("").contains("claude")
+                }
+            }.getOrDefault(false)
+
+        private val busy: Boolean
+            get() = runCatching { (widget as? ShellTerminalWidget)?.hasRunningCommands() == true }
                 .getOrDefault(false)
 
         /** 팔레트에 보여줄 한 줄 — 고르면 뭐가 일어나는지 알 수 있게 */
@@ -32,8 +45,9 @@ object TerminalTabs {
                 val session = registered?.sessionId
                 return when {
                     session != null -> "$title  (continue — session ${session.take(8)})"
-                    idleShell -> "$title  (shell — claude will be started here)"
-                    else -> "$title  (claude running — continue here)"
+                    claudeRunning -> "$title  (claude running — continue here)"
+                    busy -> "$title  (busy — running something else)"
+                    else -> "$title  (shell — claude will be started here)"
                 }
             }
     }
