@@ -11,9 +11,14 @@ import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import dev.roon.taskqueue.cli.ClaudeCli
 import dev.roon.taskqueue.cli.StreamEvent
+import dev.roon.taskqueue.session.ContextUsage
+import dev.roon.taskqueue.session.SessionPaths
+import dev.roon.taskqueue.session.SessionScanner
+import dev.roon.taskqueue.session.SessionWatcher
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.io.File
+import java.util.UUID
 import javax.swing.JButton
 import javax.swing.JPanel
 
@@ -34,6 +39,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     private var handler: OSProcessHandler? = null
+    private var watch: SessionWatcher.Handle? = null
 
     init {
         border = JBUI.Borders.empty(8)
@@ -76,26 +82,56 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         if (prompt.isEmpty()) return
 
         val workDir = project.basePath?.let(::File) ?: File(System.getProperty("user.home"))
+
+        // 세션 ID 를 우리가 정한다 — jsonl 경로를 미리 알아야 상태 판정을 붙일 수 있다
+        val sessionId = UUID.randomUUID().toString()
+        val sessionFile = SessionPaths.sessionFile(workDir.absolutePath, sessionId)
+        val fromOffset = if (sessionFile.isFile) sessionFile.length() else 0L
+
         output.text = ""
-        append("$ claude -p \"$prompt\"  (cwd: ${workDir.absolutePath})\n\n")
+        append("$ claude -p \"$prompt\"  (cwd: ${workDir.absolutePath})\n")
+        append("session: $sessionId\njsonl: ${sessionFile.absolutePath}\n\n")
         setRunning(true)
 
         handler = cli.run(
             prompt = prompt,
             workDir = workDir,
+            sessionId = sessionId,
             onEvent = { event -> ui { render(event) } },
             onFinish = { exitCode ->
                 ui {
-                    append("\n— 종료 (exit $exitCode)\n")
+                    append("\n— 프로세스 종료 (exit $exitCode)\n")
+                    reportFinalState(sessionFile)
                     setRunning(false)
                 }
             },
         )
+
+        // 1단계 판정기를 실제로 붙여본다 (2A-4 완료 판정의 전신)
+        watch = SessionWatcher.getInstance().watch(sessionFile, fromOffset) { state ->
+            ui { append("[state] $state\n") }
+        }
     }
 
     private fun stop() {
+        watch?.cancel()
         handler?.destroyProcess()
         append("\n— 취소 요청\n")
+    }
+
+    /** 종료 후 최종 판정 + 컨텍스트 사용량 표시 */
+    private fun reportFinalState(sessionFile: File) {
+        watch?.cancel()
+        if (!sessionFile.isFile) {
+            append("[state] jsonl 없음 — 경로 규칙 확인 필요\n")
+            return
+        }
+        val state = SessionScanner.sessionState(sessionFile)
+        val model = SessionScanner.lastModel(sessionFile)
+        val tokens = SessionScanner.lastContextTokens(sessionFile)
+        append("[final] $state  model=$model  ctx=${ContextUsage.label(tokens, model)}\n")
+        SessionScanner.lastAssistantText(sessionFile).takeIf { it.isNotEmpty() }
+            ?.let { append("[last] $it\n") }
     }
 
     private fun render(e: StreamEvent) {
@@ -131,6 +167,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun ui(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)
 
     override fun dispose() {
+        watch?.cancel()
         handler?.destroyProcess()
         handler = null
     }
