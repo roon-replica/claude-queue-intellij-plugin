@@ -7,3 +7,4 @@ out/
 private/
 
 .intellijPlatform/
+runIde*.log
