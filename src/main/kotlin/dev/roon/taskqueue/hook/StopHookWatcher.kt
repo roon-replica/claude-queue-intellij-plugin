@@ -47,14 +47,21 @@ class StopHookWatcher : Disposable {
 
     data class StopSignal(val sessionId: String, val transcriptPath: String?, val cwd: String?)
 
-    /** 훅이 파일을 남길 디렉토리. 플러그인이 만들고 비운다 */
+    /**
+     * 훅이 파일을 남길 디렉토리.
+     * **홈 아래는 쓸 수 없다** — claude 훅은 샌드박스에서 돌아 홈 경로 쓰기가 막힌다(실측).
+     * temp 디렉토리는 허용되므로 그쪽을 쓴다.
+     */
     val stopsDir: File
-        get() = File(System.getProperty("user.home"), ".task-queue/stops")
+        get() = File(System.getProperty("java.io.tmpdir"), "task-queue/stops")
 
-    /** 훅에 넣을 명령 — mktemp 로 파일명이 겹치지 않게 한다 */
+    /**
+     * 훅에 넣을 명령. mktemp 로 파일명이 겹치지 않게 한다.
+     * BSD(macOS) mktemp 는 템플릿이 X 로 끝나야 치환한다 — 확장자를 붙이면 그대로 파일명이 된다.
+     */
     fun hookCommand(): String {
         stopsDir.mkdirs()
-        val template = File(stopsDir, "stop-XXXXXXXX.json").absolutePath
+        val template = File(stopsDir, "stop-XXXXXXXX").absolutePath
         return "cat > \"\$(mktemp ${shellQuote(template)})\""
     }
 
@@ -77,7 +84,7 @@ class StopHookWatcher : Disposable {
 
     /** 새 훅 파일을 읽어 해당 세션 대기자에게 전달하고, 파일은 지운다 */
     private fun sweep() {
-        val files = stopsDir.listFiles { f -> f.isFile && f.name.endsWith(".json") } ?: return
+        val files = stopsDir.listFiles { f -> f.isFile && f.name.startsWith("stop-") } ?: return
         for (file in files) {
             val signal = parse(file)
             file.delete()

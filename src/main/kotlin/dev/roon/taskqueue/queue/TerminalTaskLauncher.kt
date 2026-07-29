@@ -138,7 +138,7 @@ class TerminalTaskLauncher(
      * 여러 줄·따옴표·백틱이 섞인 프롬프트를 셸이 해석하지 않게 하는 안전한 방법.
      */
     private fun writePromptFile(task: TaskEntry): File {
-        val dir = File(System.getProperty("user.home"), ".task-queue/prompts")
+        val dir = File(System.getProperty("java.io.tmpdir"), "task-queue/prompts")
         dir.mkdirs()
         val file = File(dir, "prompt-${task.id}-${task.attempts}.txt")
         file.writeText(task.prompt)
