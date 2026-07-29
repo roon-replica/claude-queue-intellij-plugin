@@ -15,6 +15,19 @@
         Requires the <code>claude</code> CLI on your PATH.
     ]]></description>
 
+    <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
+    <change-notes><![CDATA[
+        <h4>0.2.0</h4>
+        <ul>
+          <li>Run a task in any terminal tab — a new one, one the plugin opened, or a shell you
+              opened yourself. If claude isn't running there yet, the plugin starts it.</li>
+          <li>Task completion is detected automatically and the next task starts on its own.</li>
+          <li>Drag cards to reorder them or to start them. Inline actions on each card
+              (edit, run, delete) and a running-task card takes you to its terminal.</li>
+          <li>Notifications when a task finishes and when the queue drains.</li>
+        </ul>
+    ]]></change-notes>
+
     <extensions defaultExtensionNs="com.intellij">
         <!--
           NONE = IDE 풍선을 띄우지 않는다. 알림은 OS(맥 알림 센터)로 보내고

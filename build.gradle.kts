@@ -41,6 +41,7 @@ intellijPlatform {
         version = providers.gradleProperty("pluginVersion")
         vendor {
             name = "roon"
+            email = "think-roon@naver.com"
         }
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
