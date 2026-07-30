@@ -55,6 +55,10 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     /** 알림 창구 (테스트에서 교체) */
     var notifier: TaskNotifications = TaskNotifier
 
+    /** 터미널 탭이 아직 살아있는지 (테스트에서 교체) */
+    var tabExists: (String) -> Boolean =
+        { label -> dev.roon.taskqueue.terminal.TerminalSessionRegistry.getInstance().find(label) != null }
+
     /** 시간 주입 — 테스트 결정성 확보 */
     var clock: () -> Long = { System.currentTimeMillis() }
 
@@ -161,12 +165,19 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         notifyChanged()
     }
 
-    /** TODO 전부를 대기줄로 올린다 */
+    /**
+     * TODO 전부를 대기줄로 올린다.
+     *
+     * "새 대화"(빈 탭 이름)로 올리면 **한 묶음으로 묶는다** — 첫 작업이 연 탭을 나머지가
+     * 물려받아 같은 대화방에서 직렬로 돈다. 각각 새 탭을 열면 맥락이 끊기고 탭만 쌓인다.
+     */
     fun runAllTodos(terminalTab: String? = null) {
         val ids = todos().map { it.id }
+        val batch = if (terminalTab?.isEmpty() == true && ids.size > 1) UUID.randomUUID().toString() else null
         ids.forEach { id ->
             find(id)?.let {
                 terminalTab?.let { tab -> it.terminalTab = tab }
+                it.batchId = batch
                 it.status = TaskStatus.QUEUED
             }
         }
@@ -272,7 +283,22 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         if (!autoAdvance) return
         if (runningId != null) return
         val next = queued().firstOrNull() ?: return
+        inheritBatchTab(next)
         startTask(next)
+    }
+
+    /**
+     * 같은 묶음의 앞선 작업이 연 탭을 물려받는다.
+     * 시작 직전에 보므로 앞 작업이 이미 끝나 탭 이름이 채워진 상태다 —
+     * 런처가 새 탭을 만들 때 [TaskEntry.terminalTab] 에 그 이름을 써 둔다.
+     */
+    private fun inheritBatchTab(task: TaskEntry) {
+        if (task.terminalTab.isNotEmpty()) return
+        val batch = task.batchId ?: return
+        val opened = state.tasks.firstOrNull { it.batchId == batch && it.terminalTab.isNotEmpty() } ?: return
+        // 그 탭을 사람이 닫았을 수도 있다 — 없으면 물려받지 않고 새 탭을 연다
+        if (!tabExists(opened.terminalTab)) return
+        task.terminalTab = opened.terminalTab
     }
 
     private fun startTask(task: TaskEntry) {

@@ -124,6 +124,42 @@ class TaskQueueServiceTest {
     }
 
     @Test
+    fun `새 대화로 전체 실행하면 뒤 작업이 첫 작업의 탭을 물려받는다`() {
+        queue.tabExists = { true }
+        queue.addTodo("A", "/tmp")
+        queue.addTodo("B", "/tmp")
+        queue.runAllTodos(terminalTab = "")
+
+        // 런처가 새 탭을 열며 이름을 채우는 것을 모사한다
+        fake.launched.last().terminalTab = "claude"
+        fake.complete()
+
+        assertEquals("claude", fake.launched.last().terminalTab)
+        assertEquals(2, fake.launched.size)
+    }
+
+    @Test
+    fun `물려받을 탭이 닫혔으면 새 탭으로 실행한다`() {
+        queue.tabExists = { false }
+        queue.addTodo("A", "/tmp")
+        queue.addTodo("B", "/tmp")
+        queue.runAllTodos(terminalTab = "")
+        fake.launched.last().terminalTab = "claude"
+        fake.complete()
+
+        assertEquals("", fake.launched.last().terminalTab)
+    }
+
+    @Test
+    fun `탭을 지정해 전체 실행하면 묶지 않는다 — 이미 한 탭이다`() {
+        queue.addTodo("A", "/tmp")
+        queue.addTodo("B", "/tmp")
+        queue.runAllTodos(terminalTab = "my-tab")
+        assertTrue(queue.tasks.all { it.batchId == null })
+        assertTrue(queue.tasks.all { it.terminalTab == "my-tab" })
+    }
+
+    @Test
     fun `인터럽트(IDLE) 는 실행을 중단하고 todo 로 되돌린다`() {
         val task = enqueueAndRun("작업", "/tmp")
         fake.emitState(SessionState.IDLE)
