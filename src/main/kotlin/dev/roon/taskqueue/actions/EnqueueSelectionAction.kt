@@ -42,7 +42,7 @@ class EnqueueSelectionAction : AnAction() {
 
         val cwd = project.basePath ?: return
         // todo 로만 넣는다 — 실행은 큐 보드에서 ▶ 로 (바로 도는 건 의도 밖 실행)
-        TaskQueueService.getInstance().addTodo("$context\n\n$instruction", cwd)
+        TaskQueueService.getInstance(project).addTodo("$context\n\n$instruction", cwd)
 
         ToolWindowManager.getInstance(project).getToolWindow("Task Queue")?.activate(null)
     }

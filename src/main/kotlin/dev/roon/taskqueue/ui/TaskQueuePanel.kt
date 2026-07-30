@@ -53,7 +53,7 @@ import javax.swing.event.DocumentListener
 class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val cli = ClaudeCli.getInstance()
-    private val queue = TaskQueueService.getInstance()
+    private val queue = TaskQueueService.getInstance(project)
 
     /**
      * 작업 입력창. 여러 줄을 받는다 — 실행 엔진은 여러 줄을 지원하는데

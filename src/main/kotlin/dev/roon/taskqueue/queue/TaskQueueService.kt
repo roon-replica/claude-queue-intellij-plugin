@@ -4,7 +4,9 @@ import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
+import com.intellij.openapi.components.StoragePathMacros
 import com.intellij.openapi.components.service
+import com.intellij.openapi.project.Project
 import com.intellij.util.xmlb.annotations.XCollection
 import dev.roon.taskqueue.notify.TaskNotifications
 import dev.roon.taskqueue.notify.TaskNotifier
@@ -26,11 +28,14 @@ class TaskQueueState {
 }
 
 /**
- * 자동작업 큐. application-level 이라 프로젝트 창을 닫아도 살아있다.
- * 한 번에 1건만 실행(순차) — 병렬은 크로스 프로젝트(post-MVP)에서 도입.
+ * 자동작업 큐. **프로젝트마다 하나**다 — 한 프로젝트 안에서는 1건씩 순차로 돌고,
+ * 프로젝트가 여럿이면 각자 하나씩 병렬로 돈다. A 를 돌려놓고 B 를 보는 게 그래서 된다.
+ *
+ * 상태는 `.idea/workspace.xml` 에 둔다. 전용 파일로 두면 VCS 에 올라가 팀원에게
+ * 내 작업 목록이 보이는데, 큐는 개인 것이다.
  */
-@Service
-@State(name = "TaskQueue", storages = [Storage("task-queue.xml")])
+@Service(Service.Level.PROJECT)
+@State(name = "TaskQueue", storages = [Storage(StoragePathMacros.WORKSPACE_FILE)])
 class TaskQueueService : PersistentStateComponent<TaskQueueState> {
 
     private var state = TaskQueueState()
@@ -449,6 +454,6 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
 
         private const val MAX_LOG_LINES = 500
 
-        fun getInstance(): TaskQueueService = service()
+        fun getInstance(project: Project): TaskQueueService = project.service()
     }
 }
