@@ -17,6 +17,15 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.4.0</h4>
+        <ul>
+          <li>Stop now leaves the running task alone and moves waiting tasks back to TODO,
+              instead of marking them done while claude keeps working.</li>
+          <li>Type multi-line tasks — Enter adds, Shift+Enter breaks the line, and the Up arrow
+              in an empty field opens your recent prompts.</li>
+          <li>Card buttons are ordered run, edit, delete, with bigger click targets.</li>
+          <li>Roomier board: a separator under each column header and more vertical padding.</li>
+        </ul>
         <h4>0.3.1</h4>
         <ul>
           <li>Fixed: a terminal tab where you started claude yourself was rejected as
