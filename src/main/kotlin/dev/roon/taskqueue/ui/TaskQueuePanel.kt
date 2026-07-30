@@ -134,9 +134,13 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 { queue.runningTask() != null || queue.queued().isNotEmpty() }) {
                 queue.stopQueue()
             })
-            add(action("Retry", "Run a failed or canceled task again", AllIcons.Actions.Restart,
-                { selected()?.status?.isFinished == true }) {
-                selected()?.let { queue.retry(it.id) }
+            // 실행 중 항목도 대상이다 — 터미널에서 Esc 로 끊으면 훅이 오지 않아 그대로 남는다
+            add(action("Retry", "Run a task again, or re-send a running one to its terminal",
+                AllIcons.Actions.Restart,
+                { selected()?.status?.let { it.isFinished || it == TaskStatus.RUNNING } == true }) {
+                selected()?.let { task ->
+                    if (task.status == TaskStatus.RUNNING) queue.resend(task.id) else queue.retry(task.id)
+                }
             })
             addSeparator()
             add(PauseResumeAction())
@@ -262,6 +266,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                                 queue.promote(task.id, tab)
                             }
                             CardAction.EDIT -> editPrompt(task)
+                            CardAction.RESEND -> queue.resend(task.id)
                         }
                         return
                     }
@@ -299,8 +304,11 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
         shortcut("meta ENTER", on = list) {
             val task = column.selected ?: return@shortcut
-            if (task.status == TaskStatus.TODO || task.status.isFinished) {
-                chooseTerminal { tab -> queue.promote(task.id, tab) }
+            when {
+                task.status == TaskStatus.TODO || task.status.isFinished ->
+                    chooseTerminal { tab -> queue.promote(task.id, tab) }
+                // 실행 중이면 터미널을 고를 필요가 없다 — 그 탭의 세션에 다시 보낸다
+                task.status == TaskStatus.RUNNING -> queue.resend(task.id)
             }
         }
         shortcut("F2", on = list) {
@@ -314,12 +322,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     /** 카드 오른쪽 버튼 영역 클릭 결과 */
-    private enum class CardAction { EDIT, RUN, DELETE }
+    private enum class CardAction { EDIT, RUN, RESEND, DELETE }
 
     /**
      * 클릭 지점이 카드의 버튼 영역인지 판정한다.
      * 리스트 렌더러는 실제 버튼이 클릭을 못 받으므로 좌표로 본다.
-     * 왼쪽부터 ▶ · ✎ · ✕ 순이고, ▶/✎ 는 todo 에만 있다(렌더러와 순서를 맞춰야 한다).
+     * todo 는 왼쪽부터 ▶ · ✎ · ✕, 실행 중은 ↻ · ✕ 다(렌더러와 순서를 맞춰야 한다).
      */
     private fun cardActionAt(column: QueueColumn, e: MouseEvent): Pair<CardAction, TaskEntry>? {
         val index = column.list.locationToIndex(e.point).takeIf { it >= 0 } ?: return null
@@ -332,9 +340,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val width = JBUI.scale(TaskCardRenderer.ACTION_WIDTH)
         val right = bounds.x + bounds.width
         val isTodo = task.status == TaskStatus.TODO
+        val isRunning = task.status == TaskStatus.RUNNING
 
         return when {
             e.x >= right - width -> CardAction.DELETE to task
+            // 실행 중 카드는 ✕ 왼쪽 한 칸만 쓴다
+            isRunning -> if (e.x >= right - 2 * width) CardAction.RESEND to task else null
             !isTodo -> null
             e.x >= right - 2 * width -> CardAction.EDIT to task
             e.x >= right - 3 * width -> CardAction.RUN to task

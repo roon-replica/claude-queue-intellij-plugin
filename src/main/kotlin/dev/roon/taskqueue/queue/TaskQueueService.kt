@@ -247,6 +247,23 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         promote(id)
     }
 
+    /**
+     * 실행 중 작업을 **같은 세션에 다시 보낸다.**
+     *
+     * 사용자가 터미널에서 Esc 로 끊으면 Stop 훅이 오지 않아 작업이 타임아웃까지 실행중으로
+     * 남는다. 그때 사람이 직접 다시 트리거하는 통로다. 탭과 세션 ID 를 그대로 두므로
+     * 인터럽트 시점까지의 맥락이 살아있는 그 대화에 프롬프트가 다시 들어간다.
+     */
+    fun resend(id: String) {
+        val task = find(id) ?: return
+        if (task.status != TaskStatus.RUNNING) return
+        // 옛 구독을 먼저 뗀다 — 안 떼면 지난 턴의 Stop 신호가 이 재전송의 완료로 읽힌다
+        running?.cancel()
+        running = null
+        runningId = null
+        startTask(task)
+    }
+
     fun cancelRunning() {
         val task = runningTask() ?: return
         running?.cancel()

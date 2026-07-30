@@ -170,6 +170,37 @@ class TaskQueueServiceTest {
     }
 
     @Test
+    fun `재전송은 같은 탭·세션 그대로 다시 실행한다`() {
+        val task = queue.addTodo("작업", "/tmp", terminalTab = "claude")
+        queue.promote(task.id)
+        task.sessionId = "sid-1"
+
+        queue.resend(task.id)
+
+        assertEquals(2, fake.launched.size)
+        assertEquals(TaskStatus.RUNNING, task.status)
+        assertEquals(2, task.attempts)
+        // 탭·세션을 유지해야 그 대화에 이어 붙는다
+        assertEquals("claude", task.terminalTab)
+        assertEquals("sid-1", task.sessionId)
+    }
+
+    @Test
+    fun `재전송은 옛 구독을 뗀다 — 지난 턴의 Stop 을 완료로 읽지 않게`() {
+        val task = enqueueAndRun("작업", "/tmp")
+        queue.resend(task.id)
+        assertEquals(1, fake.canceled)
+    }
+
+    @Test
+    fun `실행 중이 아니면 재전송하지 않는다`() {
+        val task = queue.addTodo("작업", "/tmp")
+        queue.resend(task.id)
+        assertEquals(0, fake.launched.size)
+        assertEquals(TaskStatus.TODO, task.status)
+    }
+
+    @Test
     fun `질문 대기(WAITING) 는 완료로 보지 않는다`() {
         val task = enqueueAndRun("작업", "/tmp")
         fake.emitState(SessionState.WAITING)

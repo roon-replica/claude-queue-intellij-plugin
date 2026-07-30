@@ -54,6 +54,9 @@ class TaskCardRenderer(
     private val run = iconButton(AllIcons.Actions.Execute, "Run this task")
     private val close = iconButton(AllIcons.Actions.Close, "Delete this task")
 
+    /** 인터럽트한 작업을 다시 시킬 통로 — 끊으면 Stop 훅이 오지 않아 카드가 그대로 남는다 */
+    private val resend = iconButton(AllIcons.Actions.Restart, "Re-send this prompt to the terminal")
+
     private fun iconButton(icon: Icon, tooltip: String) = JLabel(icon).apply {
         preferredSize = JBUI.size(ACTION_WIDTH, 16)
         horizontalAlignment = SwingConstants.CENTER
@@ -68,11 +71,13 @@ class TaskCardRenderer(
             add(meta, BorderLayout.CENTER)
             add(summary, BorderLayout.SOUTH)
         }
-        // FlowLayout 은 숨긴 컴포넌트를 건너뛴다 — todo 가 아니면 ✕ 만 오른쪽에 남는다
+        // FlowLayout 은 숨긴 컴포넌트를 건너뛴다 — todo 가 아니면 ✕ 만 오른쪽에 남는다.
+        // 버튼은 4개지만 동시에 보이는 건 최대 3개(todo: ▶✎✕, 실행중: ↻✕)라 폭 계산은 그대로다
         val actions = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
             isOpaque = false
             add(run)
             add(edit)
+            add(resend)
             add(close)
         }
         add(dot, BorderLayout.WEST)
@@ -106,6 +111,7 @@ class TaskCardRenderer(
         val isTodo = task.status == TaskStatus.TODO
         run.isVisible = isTodo && showActions
         edit.isVisible = isTodo && showActions
+        resend.isVisible = task.status == TaskStatus.RUNNING && showActions
         close.isVisible = showActions
 
         val label = task.shortLabel().ifEmpty { "(empty prompt)" }
