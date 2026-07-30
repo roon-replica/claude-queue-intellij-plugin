@@ -157,9 +157,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             })
             addSeparator()
             add(PauseResumeAction())
-            addSeparator()
-            add(action("Log", "Plugin activity log (claude output lives in the terminal tab)",
-                AllIcons.Debugger.Console, { true }) { showLog() })
         }
 
         val toolbar: ActionToolbar = ActionManager.getInstance()
@@ -507,30 +504,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         val isJson = line.trimStart().startsWith("{")
         lastLog = if (isJson) LogFormatter.format(line) ?: return else line
         refresh()
-    }
-
-    /** 문제 생겼을 때만 열어 보는 창 — 평소엔 화면을 차지하지 않는다 */
-    private fun showLog() {
-        val lines = queue.recentLog().mapNotNull { line ->
-            if (line.trimStart().startsWith("{")) LogFormatter.format(line) else line
-        }
-        val area = JBTextArea(lines.joinToString("\n").ifEmpty { "No activity yet" }).apply {
-            isEditable = false
-            font = JBFont.small()
-            caretPosition = document.length
-        }
-        JBPopupFactory.getInstance()
-            .createComponentPopupBuilder(JBScrollPane(area), area)
-            .setTitle("Activity Log")
-            .setResizable(true)
-            .setMovable(true)
-            .setRequestFocus(true)
-            .setMinSize(JBUI.size(560, 320))
-            .createPopup()
-            .let { popup ->
-                val at = cursorPoint()
-                if (at != null) popup.show(at) else popup.showInFocusCenter()
-            }
     }
 
     private fun ui(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)
