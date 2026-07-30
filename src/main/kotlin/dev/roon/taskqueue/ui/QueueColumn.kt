@@ -9,6 +9,8 @@ import com.intellij.util.ui.JBUI
 import dev.roon.taskqueue.queue.TaskEntry
 import java.awt.BorderLayout
 import java.awt.Cursor
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
@@ -17,6 +19,7 @@ import javax.swing.Icon
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
+import javax.swing.ScrollPaneConstants
 
 /**
  * 칸반 컬럼 하나 — 헤더(제목+개수) + 카드 리스트.
@@ -64,8 +67,26 @@ class QueueColumn(
             add(headerAction, BorderLayout.EAST)
         }
         add(headerRow, BorderLayout.NORTH)
-        add(JBScrollPane(list), BorderLayout.CENTER)
+        val scroll = JBScrollPane(list).apply {
+            // 가로 스크롤을 두면 카드가 옆으로 늘어나 오른쪽 버튼이 보이는 영역 밖으로 나간다
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        }
+        add(scroll, BorderLayout.CENTER)
         trackHover()
+        reflowOnResize()
+    }
+
+    /**
+     * 컬럼 폭이 바뀌면 줄바꿈 위치가 달라져 카드 높이도 달라진다.
+     * JList 는 셀 높이를 캐시하므로 다시 재게 만들어야 글자가 잘리지 않는다.
+     */
+    private fun reflowOnResize() {
+        list.addComponentListener(object : ComponentAdapter() {
+            override fun componentResized(e: ComponentEvent) {
+                list.fixedCellHeight = 1
+                list.fixedCellHeight = -1
+            }
+        })
     }
 
     /** 바뀐 두 행만 다시 그린다 — 리스트 전체 repaint 는 낭비다 */

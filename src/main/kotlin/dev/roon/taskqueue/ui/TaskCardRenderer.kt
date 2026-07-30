@@ -41,6 +41,9 @@ class TaskCardRenderer(
         font = JBFont.small()
     }
 
+    /** 카드를 그릴 컬럼 폭 — 긴 메타/요약이 카드를 옆으로 늘리지 못하게 상한으로 쓴다 */
+    private var cellWidth = 0
+
     /** claude 의 마지막 답변 — 터미널을 열지 않고도 결과를 알 수 있게 */
     private val summary = JLabel().apply {
         font = JBFont.small()
@@ -107,7 +110,11 @@ class TaskCardRenderer(
 
         val label = task.shortLabel().ifEmpty { "(empty prompt)" }
         // 실행 순서가 의미 있는 항목에만 번호 — 돌고 있거나 끝난 건 순서가 무의미하다
-        title.text = if (task.status.isOrdered) "${index + 1}. $label" else label
+        val heading = if (task.status.isOrdered) "${index + 1}. $label" else label
+        // 컬럼 폭에 맞춰 여러 줄로 접는다. 한 줄로 두면 카드가 옆으로 늘어나 오른쪽
+        // 버튼이 보이는 영역 밖으로 밀려나 클릭할 수 없었다
+        title.text = wrapped(heading, textWidth(list))
+        title.toolTipText = task.prompt
         // 끝난 작업은 흐리게 — 지금 돌거나 앞으로 돌 작업에 시선이 가게
         title.foreground = if (task.status.isFinished && !isSelected) JBColor.GRAY else fg
 
@@ -118,6 +125,7 @@ class TaskCardRenderer(
         summary.foreground = if (isSelected) fg else JBColor.GRAY
         summary.toolTipText = task.summary
 
+        cellWidth = list.width
         meta.text = metaOf(task)
         meta.foreground = when {
             isSelected -> fg
@@ -135,6 +143,11 @@ class TaskCardRenderer(
             JBUI.Borders.empty(CARD_PAD_V, 6)
         }
         return this
+    }
+
+    /** 카드는 컬럼보다 넓어질 수 없다 — 넘치면 가로 스크롤이 생겨 버튼이 화면 밖으로 나간다 */
+    override fun getPreferredSize() = super.getPreferredSize().also {
+        if (cellWidth > 0) it.width = minOf(it.width, cellWidth)
     }
 
     /** 상태에 따라 다른 정보를 보여준다 — 완료는 끝난 시각·소요·비용, 실패는 이유 */
@@ -172,6 +185,21 @@ class TaskCardRenderer(
         }
         if (task.attempts > 1) parts += "attempt ${task.attempts}"
         return parts.joinToString("  ·  ")
+    }
+
+    /**
+     * 제목에 쓸 수 있는 폭. 버튼은 실제로 보일 때만 자리를 차지하지만, 폭을 hover 에 따라
+     * 바꾸면 마우스만 올려도 줄바꿈이 흔들린다 — 항상 세 칸을 비워 둔다.
+     */
+    private fun textWidth(list: JList<out TaskEntry>): Int {
+        val fixed = JBUI.scale(10 + 6 + 12) + 3 * JBUI.scale(ACTION_WIDTH)
+        return (list.width - fixed).coerceAtLeast(JBUI.scale(80))
+    }
+
+    /** JLabel 은 HTML 에 폭을 주면 그 안에서 접는다 — 특수문자는 태그로 새지 않게 막는다 */
+    private fun wrapped(text: String, width: Int): String {
+        val safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return "<html><div width=\"$width\">$safe</div></html>"
     }
 
     /** 답변은 여러 줄일 수 있다 — 카드는 한 줄만 쓴다 */
