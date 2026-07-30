@@ -201,6 +201,48 @@ class TaskQueueServiceTest {
     }
 
     @Test
+    fun `runNow 는 대기 항목을 지금 실행한다`() {
+        queue.pause()
+        val task = queue.addTodo("작업", "/tmp")
+        queue.promote(task.id)
+        assertEquals(TaskStatus.QUEUED, task.status)
+
+        queue.runNow(task.id)
+
+        assertEquals(TaskStatus.RUNNING, task.status)
+        assertEquals(1, fake.launched.size)
+        // 일시정지 상태에서 눌렀으면 이것 하나만 돌아야 한다
+        assertFalse(queue.autoAdvance)
+    }
+
+    @Test
+    fun `취소로 멈춘 큐를 runNow 로 이어 돌린다`() {
+        val first = enqueueAndRun("작업1", "/tmp")
+        val second = queue.addTodo("작업2", "/tmp")
+        queue.promote(second.id)
+        assertEquals(TaskStatus.QUEUED, second.status)
+
+        // 실행 중 항목을 지우면 큐가 다음으로 넘어가지 않는다
+        queue.remove(first.id)
+        assertEquals(TaskStatus.QUEUED, second.status)
+
+        queue.runNow(second.id)
+        assertEquals(TaskStatus.RUNNING, second.status)
+    }
+
+    @Test
+    fun `도는 게 있으면 runNow 는 무시된다 — 직렬 실행`() {
+        enqueueAndRun("작업1", "/tmp")
+        val second = queue.addTodo("작업2", "/tmp")
+        queue.promote(second.id)
+
+        queue.runNow(second.id)
+
+        assertEquals(TaskStatus.QUEUED, second.status)
+        assertEquals(1, fake.launched.size)
+    }
+
+    @Test
     fun `질문 대기(WAITING) 는 완료로 보지 않는다`() {
         val task = enqueueAndRun("작업", "/tmp")
         fake.emitState(SessionState.WAITING)

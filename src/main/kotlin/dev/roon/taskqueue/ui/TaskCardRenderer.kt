@@ -29,10 +29,13 @@ import javax.swing.SwingConstants
 /**
  * 카드 = 상태점 + 프롬프트 1줄 + 메타 1줄.
  * @param highlight 방금 상태가 바뀐 카드의 잔상 세기 (0f = 없음)
+ * @param retryable ↻ 를 띄울 항목인지. **좌표 판정과 같은 판단을 써야 한다** —
+ *   어긋나면 안 보이는 버튼이 눌리거나 보이는 버튼이 안 먹는다
  */
 class TaskCardRenderer(
     private val highlight: (TaskEntry) -> Float = { 0f },
     private val hovered: (Int) -> Boolean = { false },
+    private val retryable: (TaskEntry) -> Boolean = { false },
 ) : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRenderer<TaskEntry> {
 
     private val dot = StatusDot()
@@ -54,8 +57,8 @@ class TaskCardRenderer(
     private val run = iconButton(AllIcons.Actions.Execute, "Run this task")
     private val close = iconButton(AllIcons.Actions.Close, "Delete this task")
 
-    /** 인터럽트한 작업을 다시 시킬 통로 — 끊으면 Stop 훅이 오지 않아 카드가 그대로 남는다 */
-    private val resend = iconButton(AllIcons.Actions.Restart, "Re-send this prompt to the terminal")
+    /** 멈춰 보이는 작업을 다시 돌리는 통로 — 실행 중이면 재전송, 대기 중이면 지금 실행 */
+    private val retry = iconButton(AllIcons.Actions.Restart, "Run this task now")
 
     private fun iconButton(icon: Icon, tooltip: String) = JLabel(icon).apply {
         preferredSize = JBUI.size(ACTION_WIDTH, 16)
@@ -77,7 +80,7 @@ class TaskCardRenderer(
             isOpaque = false
             add(run)
             add(edit)
-            add(resend)
+            add(retry)
             add(close)
         }
         add(dot, BorderLayout.WEST)
@@ -111,7 +114,7 @@ class TaskCardRenderer(
         val isTodo = task.status == TaskStatus.TODO
         run.isVisible = isTodo && showActions
         edit.isVisible = isTodo && showActions
-        resend.isVisible = task.status == TaskStatus.RUNNING && showActions
+        retry.isVisible = showActions && retryable(task)
         close.isVisible = showActions
 
         val label = task.shortLabel().ifEmpty { "(empty prompt)" }

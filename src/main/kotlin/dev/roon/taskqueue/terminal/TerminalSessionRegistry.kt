@@ -33,10 +33,16 @@ class TerminalSessionRegistry {
         /** 우리가 띄워 Stop 훅을 심은 탭인지 */
         val ours: Boolean,
     ) {
-        /** 대화형 입력창에 한 줄 밀어넣는다. 쓰기용이라 신 API 어댑터를 그때그때 만들어도 된다 */
+        /**
+         * 대화형 입력창에 한 줄 밀어넣는다. 쓰기용이라 신 API 어댑터를 그때그때 만들어도 된다.
+         *
+         * **먼저 입력창을 비운다.** 인터럽트한 세션에는 사용자가 치다 만 글자가 남아 있을 수
+         * 있고, 그대로 보내면 앞글자와 이어붙어 엉뚱한 지시가 된다.
+         * 한 번의 write 로 보내 비우기와 입력 사이에 끼어들 틈을 두지 않는다.
+         */
         fun write(text: String): Result<Unit> = runCatching {
             widget.asNewWidget().ttyConnectorAccessor.executeWithTtyConnector { connector ->
-                connector.write(text + "\r")
+                connector.write(CLEAR_INPUT + text + "\r")
             }
         }
 
@@ -142,6 +148,9 @@ class TerminalSessionRegistry {
     companion object {
         /** claude 실행 파일 경로에 항상 들어가는 조각 (버전 디렉토리 포함) */
         private const val CLAUDE_MARKER = "claude"
+
+        /** 입력창 비우기 = Ctrl-U. 빈 입력창에 보내도 아무 일도 일어나지 않는다 */
+        private const val CLEAR_INPUT = "\u0015"
 
         fun getInstance(): TerminalSessionRegistry = service()
     }

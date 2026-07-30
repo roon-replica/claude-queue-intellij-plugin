@@ -30,6 +30,7 @@ class QueueColumn(
     private val emptyHint: String,
     highlight: (TaskEntry) -> Float = { 0f },
     accent: JBColor = StatusColors.TODO,
+    retryable: (TaskEntry) -> Boolean = { false },
 ) : JPanel(BorderLayout()) {
 
     val model = DefaultListModel<TaskEntry>()
@@ -39,7 +40,7 @@ class QueueColumn(
 
     val list = JBList(model).apply {
         selectionMode = ListSelectionModel.SINGLE_SELECTION
-        cellRenderer = TaskCardRenderer(highlight) { it == hoverIndex }
+        cellRenderer = TaskCardRenderer(highlight, { it == hoverIndex }, retryable)
         emptyText.text = emptyHint
     }
 

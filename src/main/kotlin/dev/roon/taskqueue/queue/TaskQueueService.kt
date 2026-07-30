@@ -264,6 +264,23 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         startTask(task)
     }
 
+    /**
+     * 대기 중(QUEUED) 항목을 지금 실행한다.
+     *
+     * 실행 중 항목을 취소·삭제하면 큐가 다음으로 넘어가지 않아(취소 경로는 [maybeStartNext] 를
+     * 부르지 않는다) 대기 항목이 그대로 남는다 — 그때 사람이 직접 돌리는 통로다.
+     *
+     * **[autoAdvance] 는 건드리지 않는다.** 일시정지 상태에서 눌렀다면 이것 하나만 돌아야 하고,
+     * 정지가 아니라면 끝난 뒤 자연히 다음으로 이어진다.
+     */
+    fun runNow(id: String) {
+        val task = find(id) ?: return
+        if (task.status != TaskStatus.QUEUED) return
+        // 직렬 실행이 원칙 — 도는 게 있으면 그것이 끝나야 한다
+        if (runningId != null) return
+        startTask(task)
+    }
+
     fun cancelRunning() {
         val task = runningTask() ?: return
         running?.cancel()
