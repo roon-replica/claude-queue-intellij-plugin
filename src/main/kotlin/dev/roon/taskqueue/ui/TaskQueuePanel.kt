@@ -129,9 +129,10 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 chooseTerminal { tab -> queue.runAllTodos(tab) }
             })
             addSeparator()
-            add(action("Stop", "Cancel the running task", AllIcons.Actions.Suspend,
-                { queue.runningTask() != null }) {
-                queue.cancelRunning()
+            add(action("Stop queue", "Stop starting new tasks and move waiting ones back to TODO",
+                AllIcons.Actions.Suspend,
+                { queue.runningTask() != null || queue.queued().isNotEmpty() }) {
+                queue.stopQueue()
             })
             add(action("Retry", "Run a failed or canceled task again", AllIcons.Actions.Restart,
                 { selected()?.status?.isFinished == true }) {
@@ -510,8 +511,8 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         /** 히스토리 팔레트에 한 번에 보이는 줄 수 (나머지는 스크롤) */
         const val HISTORY_ROWS = 5
 
-        /** 입력창 높이 범위 — 최소 2줄, 길어지면 6줄까지 */
-        const val INPUT_MIN_ROWS = 2
+        /** 입력창 높이 범위 — 기본 1줄, 줄바꿈하면 6줄까지 늘어난다 */
+        const val INPUT_MIN_ROWS = 1
         const val INPUT_MAX_ROWS = 6
     }
 

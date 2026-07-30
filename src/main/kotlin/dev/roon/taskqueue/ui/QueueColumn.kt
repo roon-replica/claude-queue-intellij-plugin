@@ -42,7 +42,7 @@ class QueueColumn(
 
     private val header = JBLabel(title).apply {
         font = JBFont.smallOrNewUiMedium().asBold()
-        border = JBUI.Borders.empty(4, 6)
+        border = JBUI.Borders.empty(6, 6)
         foreground = accent
     }
 
@@ -58,6 +58,8 @@ class QueueColumn(
     init {
         val headerRow = JPanel(BorderLayout()).apply {
             isOpaque = false
+            // 헤더와 카드 목록을 가르는 선 — 컬럼 경계가 눈에 잡힌다
+            border = JBUI.Borders.customLine(JBColor.border(), 0, 0, 1, 0)
             add(header, BorderLayout.CENTER)
             add(headerAction, BorderLayout.EAST)
         }

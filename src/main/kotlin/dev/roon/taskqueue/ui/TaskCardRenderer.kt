@@ -58,7 +58,7 @@ class TaskCardRenderer(
     }
 
     init {
-        border = JBUI.Borders.empty(4, 6)
+        border = JBUI.Borders.empty(CARD_PAD_V, 6)
         val texts = JPanel(BorderLayout()).apply {
             isOpaque = false
             add(title, BorderLayout.NORTH)
@@ -129,10 +129,10 @@ class TaskCardRenderer(
         border = if (task.status == TaskStatus.RUNNING) {
             BorderFactory.createCompoundBorder(
                 JBUI.Borders.customLine(StatusColors.RUNNING, 0, 2, 0, 0),
-                JBUI.Borders.empty(4, 4),
+                JBUI.Borders.empty(CARD_PAD_V, 4),
             )
         } else {
-            JBUI.Borders.empty(4, 6)
+            JBUI.Borders.empty(CARD_PAD_V, 6)
         }
         return this
     }
@@ -231,6 +231,9 @@ class TaskCardRenderer(
     }
 
     companion object {
+
+        /** 카드 세로 여백 — 너무 좁으면 목록이 답답하다 */
+        private const val CARD_PAD_V = 7
 
         /** 카드 오른쪽 버튼 하나의 폭 — 클릭 판정도 이 값을 쓴다 */
         const val ACTION_WIDTH = 22

@@ -210,6 +210,32 @@ class TaskQueueServiceTest {
     }
 
     @Test
+    fun `큐 정지는 실행 중 작업을 건드리지 않고 대기 항목만 todo 로 되돌린다`() {
+        val a = enqueueAndRun("A", "/tmp")
+        val b = enqueueAndRun("B", "/tmp")
+        assertEquals(TaskStatus.RUNNING, a.status)
+        assertEquals(TaskStatus.QUEUED, b.status)
+
+        queue.stopQueue()
+
+        assertEquals(TaskStatus.RUNNING, a.status)   // 도는 건 그대로
+        assertEquals(TaskStatus.TODO, b.status)      // 대기는 되돌림
+        assertEquals(0, fake.canceled)               // 러너에 취소를 보내지 않는다
+        assertEquals(false, queue.autoAdvance)
+    }
+
+    @Test
+    fun `큐 정지 후 실행 중 작업이 끝나도 다음이 시작되지 않는다`() {
+        enqueueAndRun("A", "/tmp")
+        enqueueAndRun("B", "/tmp")
+        queue.stopQueue()
+        fake.complete()
+        assertEquals(TaskStatus.DONE, queue.tasks[0].status)
+        assertEquals(TaskStatus.TODO, queue.tasks[1].status)
+        assertEquals(1, fake.launched.size)
+    }
+
+    @Test
     fun `취소 후 다음 작업은 start 로 이어간다`() {
         enqueueAndRun("작업1", "/tmp")
         enqueueAndRun("작업2", "/tmp")

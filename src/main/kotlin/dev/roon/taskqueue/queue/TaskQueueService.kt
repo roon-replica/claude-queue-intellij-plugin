@@ -244,6 +244,18 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         finish(task, TaskStatus.CANCELED, exitCode = null, errorMessage = "Canceled by user")
     }
 
+    /**
+     * 큐를 멈춘다. **실행 중인 작업은 건드리지 않는다** — 이미 도는 claude 를 중간에
+     * 끊으면 작업이 반쯤 된 채로 남고, 어차피 프로세스를 죽이지도 못한다.
+     * 대기 중인 항목만 TODO 로 되돌려 의도치 않게 시작되지 않게 한다.
+     */
+    fun stopQueue() {
+        autoAdvance = false
+        val waiting = queued()
+        waiting.forEach { it.status = TaskStatus.TODO }
+        if (waiting.isNotEmpty()) notifyChanged()
+    }
+
     /** 큐 진행 시작 (autoAdvance 를 껐다 켠 뒤 이어서 돌릴 때) */
     fun start() {
         autoAdvance = true
