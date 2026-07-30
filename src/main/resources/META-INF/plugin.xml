@@ -17,6 +17,13 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.4.1</h4>
+        <ul>
+          <li>Running every TODO in a new conversation now uses a single terminal tab and runs them
+              one after another, so they share context instead of opening a tab each.</li>
+          <li>Long prompts wrap onto more lines on a card — the run/edit/delete buttons no longer
+              get pushed out of view.</li>
+        </ul>
         <h4>0.4.0</h4>
         <ul>
           <li>Stop now leaves the running task alone and moves waiting tasks back to TODO,
