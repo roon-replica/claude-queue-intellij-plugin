@@ -68,8 +68,8 @@ class TaskCardRenderer(
         // FlowLayout 은 숨긴 컴포넌트를 건너뛴다 — todo 가 아니면 ✕ 만 오른쪽에 남는다
         val actions = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
             isOpaque = false
-            add(edit)
             add(run)
+            add(edit)
             add(close)
         }
         add(dot, BorderLayout.WEST)
@@ -235,8 +235,8 @@ class TaskCardRenderer(
         /** 카드 세로 여백 — 너무 좁으면 목록이 답답하다 */
         private const val CARD_PAD_V = 7
 
-        /** 카드 오른쪽 버튼 하나의 폭 — 클릭 판정도 이 값을 쓴다 */
-        const val ACTION_WIDTH = 22
+        /** 카드 오른쪽 버튼 하나의 폭 — 클릭 판정도 이 값을 쓴다. 좁으면 정밀 조준이 필요하다 */
+        const val ACTION_WIDTH = 28
 
         /** 잔상이 가장 진할 때의 혼합 비율 — 글자가 묻히지 않을 만큼만 */
         private const val HIGHLIGHT_MAX = 0.45f

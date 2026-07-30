@@ -319,7 +319,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     /**
      * 클릭 지점이 카드의 버튼 영역인지 판정한다.
      * 리스트 렌더러는 실제 버튼이 클릭을 못 받으므로 좌표로 본다.
-     * 오른쪽부터 ✕ · ▶ · ✎ 순이고, ▶/✎ 는 todo 에만 있다(렌더러와 순서를 맞춰야 한다).
+     * 왼쪽부터 ▶ · ✎ · ✕ 순이고, ▶/✎ 는 todo 에만 있다(렌더러와 순서를 맞춰야 한다).
      */
     private fun cardActionAt(column: QueueColumn, e: MouseEvent): Pair<CardAction, TaskEntry>? {
         val index = column.list.locationToIndex(e.point).takeIf { it >= 0 } ?: return null
@@ -336,8 +336,8 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         return when {
             e.x >= right - width -> CardAction.DELETE to task
             !isTodo -> null
-            e.x >= right - 2 * width -> CardAction.RUN to task
-            e.x >= right - 3 * width -> CardAction.EDIT to task
+            e.x >= right - 2 * width -> CardAction.EDIT to task
+            e.x >= right - 3 * width -> CardAction.RUN to task
             else -> null
         }
     }
