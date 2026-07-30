@@ -190,7 +190,6 @@ class TerminalTaskLauncher(
 
         awaitHookStop(hooks, sessionId, sentAt, running, onLine, onState, onDone)
 
-        widget.requestFocus()
         // executeCommand 는 셸 프롬프트 준비를 기다린다 (TTY 직접 쓰기는 초기화 중 유실된다)
         onLine("$ $command")
         runCatching { widget.executeCommand(command) }
@@ -231,7 +230,7 @@ class TerminalTaskLauncher(
         val command = buildCommand(exe, sessionId, hooks.hookCommand(sessionId), writePromptFile(task))
         awaitHookStop(hooks, sessionId, sentAt, running, onLine, onState, onDone)
 
-        tab.focus()
+        // 포커스는 옮기지 않는다 — awaitTabReady 가 이미 탭을 보이게 해뒀다
         onLine("· starting claude in the shell tab")
         onLine("$ $command")
         runCatching { shell.executeCommand(command) }
@@ -398,7 +397,7 @@ class TerminalTaskLauncher(
     /** 이미 claude 가 도는 탭의 입력창에 프롬프트를 넣는다 */
     private fun sendPrompt(tab: TerminalSessionRegistry.Tab, task: TaskEntry, onLine: (String) -> Unit) {
         val text = singleLine(task.prompt)
-        tab.focus()
+        // 포커스를 옮기지 않는다 — TTY 쓰기는 Swing 포커스와 무관하다
         tab.write(text).onFailure { onLine("· send failed: ${it.message}") }
         onLine("› ${text.take(120)}")
     }
@@ -413,10 +412,14 @@ class TerminalTaskLauncher(
         sessionId: String,
     ): ShellTerminalWidget {
         val label = registry.uniqueLabel(task.shortLabel().take(20).ifEmpty { "claude" })
+        // requestFocus=false — 자동 진행이 사용자 화면을 낚아채지 않게. 대신 아래에서 탭만 보여준다
         val widget = TerminalToolWindowManager.getInstance(project)
-            .createLocalShellWidget(task.cwd, label, true)
+            .createLocalShellWidget(task.cwd, label, false)
         registry.register(label, widget, sessionId, ours = true)
         task.terminalTab = label
+        // 탭이 보이지 않으면 터미널이 세션 시작을 미룬다(deferSessionStartUntilUiShown) —
+        // 보이게만 하고 키보드 포커스는 그대로 둔다
+        TerminalTabFocuser.focus(project, label, moveFocus = false)
         return widget
     }
 

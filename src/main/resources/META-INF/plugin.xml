@@ -17,6 +17,13 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.4.4</h4>
+        <ul>
+          <li>Starting a task no longer steals your keyboard focus, so the queue moving on to the
+              next task won't drag you away from whatever you were doing. Opening a brand-new tab
+              still shows the terminal — it has to be visible for the session to start — but your
+              focus stays put. Double-click a card when you do want to jump to its terminal.</li>
+        </ul>
         <h4>0.4.3</h4>
         <ul>
           <li>Each project now has its own queue, so a task running in one project no longer blocks
