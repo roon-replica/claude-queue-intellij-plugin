@@ -16,6 +16,13 @@ import java.util.concurrent.CopyOnWriteArrayList
 class TaskQueueState {
     @get:XCollection(style = XCollection.Style.v2)
     var tasks: MutableList<TaskEntry> = mutableListOf()
+
+    /**
+     * 최근 입력한 프롬프트 (최신순). 카드에서 뽑지 않고 따로 둔다 —
+     * '완료 정리' 로 카드를 치워도 히스토리는 남아야 재사용에 쓸모가 있다.
+     */
+    @get:XCollection(style = XCollection.Style.v2)
+    var history: MutableList<String> = mutableListOf()
 }
 
 /**
@@ -87,6 +94,18 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         logListeners -= listener
     }
 
+    /** 최근 입력한 프롬프트 (최신순) */
+    fun history(): List<String> = state.history.toList()
+
+    /** 같은 문장은 하나로 합치고 최신을 앞에 둔다 */
+    private fun rememberPrompt(prompt: String) {
+        val text = prompt.trim()
+        if (text.isEmpty()) return
+        state.history.remove(text)
+        state.history.add(0, text)
+        while (state.history.size > MAX_HISTORY) state.history.removeAt(state.history.lastIndex)
+    }
+
     /** 실행 중 작업의 최근 출력 스냅샷 */
     fun recentLog(): List<String> = synchronized(logBuffer) { logBuffer.toList() }
 
@@ -109,6 +128,7 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         execMode: ExecMode = ExecMode.TERMINAL,
         terminalTab: String = "",
     ): TaskEntry {
+        rememberPrompt(prompt)
         val task = TaskEntry(UUID.randomUUID().toString(), prompt, cwd, clock())
         task.execMode = execMode
         task.terminalTab = terminalTab.trim()
@@ -353,6 +373,8 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     }
 
     companion object {
+        private const val MAX_HISTORY = 20
+
         private const val MAX_LOG_LINES = 500
 
         fun getInstance(): TaskQueueService = service()

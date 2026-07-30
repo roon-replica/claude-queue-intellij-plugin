@@ -15,11 +15,11 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.OnePixelSplitter
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
-import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import dev.roon.taskqueue.cli.ClaudeCli
@@ -31,13 +31,19 @@ import dev.roon.taskqueue.terminal.TerminalTabs
 import dev.roon.taskqueue.terminal.TerminalTabFocuser
 import java.awt.BorderLayout
 import java.awt.MouseInfo
+import java.awt.event.InputEvent
+import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
+import javax.swing.AbstractAction
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.KeyStroke
 import javax.swing.Timer
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 
 /**
  * 자동작업 큐 보드 — todo / 진행 / 완료 3컬럼.
@@ -49,8 +55,17 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private val cli = ClaudeCli.getInstance()
     private val queue = TaskQueueService.getInstance()
 
-    private val promptField = JBTextField().apply {
-        emptyText.text = "Type a task and press Enter — added to TODO"
+    /**
+     * 작업 입력창. 여러 줄을 받는다 — 실행 엔진은 여러 줄을 지원하는데
+     * 한 줄 입력창이 그보다 좁은 제약이었다.
+     *
+     * Enter 로 추가, Shift+Enter 로 줄바꿈 (채팅앱 관례). 내용에 따라 높이가 늘어난다.
+     */
+    private val promptField = JBTextArea(INPUT_MIN_ROWS, 0).apply {
+        emptyText.text = "Type a task and press Enter — added to TODO (Shift+Enter for a new line)"
+        lineWrap = true
+        wrapStyleWord = true
+        border = JBUI.Borders.empty(3, 5)
     }
 
 
@@ -95,7 +110,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         add(buildBody(), BorderLayout.CENTER)
         add(statusLabel, BorderLayout.SOUTH)
 
-        promptField.addActionListener { addTodo() }
+        wirePromptField()
         wireColumns()
         queue.addListener(queueListener)
         queue.addLogListener(logListener)
@@ -134,13 +149,82 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         toolbar.targetComponent = this
 
         val inputRow = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
-            add(promptField, BorderLayout.CENTER)
+            add(JBScrollPane(promptField), BorderLayout.CENTER)
         }
 
         return JPanel(BorderLayout()).apply {
             add(toolbar.component, BorderLayout.NORTH)
             add(inputRow, BorderLayout.SOUTH)
             border = JBUI.Borders.empty(2, 4)
+        }
+    }
+
+    /**
+     * Enter = 추가, Shift+Enter = 줄바꿈.
+     * 텍스트 영역은 기본적으로 Enter 가 줄바꿈이라 그 바인딩을 갈아끼운다.
+     */
+    private fun wirePromptField() {
+        val input = promptField.inputMap
+        input.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "taskqueue-add")
+        // 빈 입력창에서만 ↑ 를 가로챈다 — 내용이 있으면 커서 이동이어야 한다
+        input.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "taskqueue-history")
+        input.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "insert-break")
+        promptField.actionMap.put("taskqueue-add", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent?) = addTodo()
+        })
+        promptField.actionMap.put("taskqueue-history", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                if (promptField.text.isEmpty()) showHistory() else moveCaretUp()
+            }
+        })
+
+        // 내용이 길어지면 높이를 늘린다 — 긴 프롬프트를 추가 전에 눈으로 확인할 수 있게
+        promptField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = growToFit()
+            override fun removeUpdate(e: DocumentEvent) = growToFit()
+            override fun changedUpdate(e: DocumentEvent) = Unit
+        })
+    }
+
+    /**
+     * 최근 프롬프트를 팔레트로 보여준다. 고르면 **입력창에 채우기만** 한다 —
+     * 대개 조금 고쳐서 쓰므로 추가는 사람이 Enter 로 결정한다.
+     */
+    private fun showHistory() {
+        val items = queue.history()
+        if (items.isEmpty()) return
+
+        JBPopupFactory.getInstance()
+            .createPopupChooserBuilder(items)
+            .setTitle("Recent prompts")
+            .setVisibleRowCount(HISTORY_ROWS)
+            .setRenderer(SimpleListCellRenderer.create { label, value, _ ->
+                label.text = value.replace(Regex("\\s+"), " ").trim()
+            })
+            .setItemChosenCallback { chosen ->
+                promptField.text = chosen
+                promptField.caretPosition = chosen.length
+                promptField.requestFocusInWindow()
+            }
+            .createPopup()
+            .showUnderneathOf(promptField)
+    }
+
+    /** 가로챈 ↑ 의 원래 동작 — 내용이 있을 때는 커서를 위로 */
+    private fun moveCaretUp() {
+        val line = promptField.getLineOfOffset(promptField.caretPosition)
+        if (line <= 0) return
+        val column = promptField.caretPosition - promptField.getLineStartOffset(line)
+        val target = promptField.getLineStartOffset(line - 1) + column
+        promptField.caretPosition = target.coerceAtMost(promptField.getLineEndOffset(line - 1))
+    }
+
+    private fun growToFit() {
+        val lines = promptField.text.count { it == '\n' } + 1
+        val rows = lines.coerceIn(INPUT_MIN_ROWS, INPUT_MAX_ROWS)
+        if (rows != promptField.rows) {
+            promptField.rows = rows
+            revalidate()
         }
     }
 
@@ -422,6 +506,13 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private companion object {
         const val NEW_TERMINAL = "New terminal"
+
+        /** 히스토리 팔레트에 한 번에 보이는 줄 수 (나머지는 스크롤) */
+        const val HISTORY_ROWS = 5
+
+        /** 입력창 높이 범위 — 최소 2줄, 길어지면 6줄까지 */
+        const val INPUT_MIN_ROWS = 2
+        const val INPUT_MAX_ROWS = 6
     }
 
     /** 조건부 활성 액션을 짧게 만드는 헬퍼 */

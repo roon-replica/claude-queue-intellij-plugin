@@ -350,6 +350,32 @@ class TaskQueueServiceTest {
     }
 
     @Test
+    fun `입력한 프롬프트가 히스토리에 최신순으로 쌓인다`() {
+        queue.pause()
+        queue.addTodo("A", "/tmp")
+        queue.addTodo("B", "/tmp")
+        assertEquals(listOf("B", "A"), queue.history())
+    }
+
+    @Test
+    fun `같은 프롬프트는 하나로 합치고 맨 앞으로 올린다`() {
+        queue.pause()
+        queue.addTodo("A", "/tmp")
+        queue.addTodo("B", "/tmp")
+        queue.addTodo("A", "/tmp")
+        assertEquals(listOf("A", "B"), queue.history())
+    }
+
+    @Test
+    fun `히스토리는 완료 정리에도 남는다`() {
+        enqueueAndRun("A", "/tmp")
+        fake.complete()
+        queue.clearFinished()
+        assertEquals(0, queue.tasks.size)
+        assertEquals(listOf("A"), queue.history())
+    }
+
+    @Test
     fun `완료 항목 정리`() {
         enqueueAndRun("작업1", "/tmp")
         fake.complete()
