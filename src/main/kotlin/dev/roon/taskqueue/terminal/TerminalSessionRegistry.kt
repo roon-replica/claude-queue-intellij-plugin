@@ -64,13 +64,27 @@ class TerminalSessionRegistry {
          *
          * @return null = 프로세스를 들여다볼 수 없음
          */
-        fun claudeRunning(): Boolean? = runCatching {
+        fun claudeRunning(): Boolean? {
             val connector = widget.ttyConnector ?: return null
             val shellProcess = (connector as? ProcessTtyConnector)?.process ?: return null
-            shellProcess.toHandle().descendants().anyMatch { handle ->
-                handle.info().command().orElse("").contains(CLAUDE_MARKER)
-            }
-        }.getOrNull()
+            val handle = handleOf(shellProcess) ?: return null
+            return runCatching {
+                handle.descendants().anyMatch { it.info().command().orElse("").contains(CLAUDE_MARKER) }
+            }.getOrNull()
+        }
+
+        /**
+         * 셸 프로세스의 핸들.
+         *
+         * **`toHandle()` 을 바로 쓰면 안 된다** — pty 프로세스(`UnixPtyProcess`)는 이를 재정의하지
+         * 않아 `UnsupportedOperationException` 을 던진다(클래스 시그니처로 확인). 그러면 판별이
+         * 'unknown' 이 되어 직접 연 claude 탭이 'busy' 로 거부됐다.
+         * `pid()` 는 구현돼 있으므로 그것으로 핸들을 얻는다.
+         */
+        private fun handleOf(process: Process): ProcessHandle? {
+            runCatching { return ProcessHandle.of(process.pid()).orElse(null) }
+            return runCatching { process.toHandle() }.getOrNull()
+        }
     }
 
     /** 같은 물리 탭이 두 번 등록되지 않게 위젯 기준으로도 지운다 */
