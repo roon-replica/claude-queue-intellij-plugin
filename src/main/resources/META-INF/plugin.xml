@@ -17,6 +17,11 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.3.1</h4>
+        <ul>
+          <li>Fixed: a terminal tab where you started claude yourself was rejected as
+              "busy running something else".</li>
+        </ul>
         <h4>0.3.0</h4>
         <ul>
           <li>Finished cards show claude's answer, so you don't have to open the terminal
