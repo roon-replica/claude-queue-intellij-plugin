@@ -17,6 +17,12 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.4.5</h4>
+        <ul>
+          <li>If your open terminal tabs can't be used, the plugin now says so instead of quietly
+              opening a new tab. This happens with the Reworked terminal engine (the default on
+              2026.1) — switch to Classic in Settings &rarr; Tools &rarr; Terminal to reuse your own tabs.</li>
+        </ul>
         <h4>0.4.4</h4>
         <ul>
           <li>Starting a task no longer steals your keyboard focus, so the queue moving on to the

@@ -418,6 +418,17 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun chooseTerminal(anchor: RelativePoint? = null, onChosen: (String) -> Unit) {
         val tabs = TerminalTabs.list(project)
         if (tabs.isEmpty()) {
+            // 탭이 있는데 하나도 못 쓰는 상황과 아예 없는 상황은 다르다 —
+            // 조용히 새 탭을 열면 왜 내 터미널이 무시됐는지 알 길이 없다
+            if (TerminalTabs.hasUnusableTabs(project)) {
+                Messages.showWarningDialog(
+                    project,
+                    "Your open terminal tabs can't be used with the Reworked terminal engine.\n\n" +
+                        "Switch it in Settings → Tools → Terminal → Terminal engine → Classic,\n" +
+                        "then restart the IDE. A new tab will be opened for now.",
+                    "Task Queue",
+                )
+            }
             onChosen("")
             return
         }

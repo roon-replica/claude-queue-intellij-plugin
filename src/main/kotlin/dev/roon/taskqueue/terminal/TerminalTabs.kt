@@ -70,6 +70,16 @@ object TerminalTabs {
         return label
     }
 
+    /**
+     * 탭이 열려 있는데 하나도 쓸 수 없는 상태인지.
+     *
+     * 신(Reworked) 터미널 엔진의 탭은 Content 에 JediTerm 위젯이 붙지 않아
+     * `getWidgetByContent` 가 항상 null 이다(실측: 신 엔진에서 복원된 탭·새 탭 모두 null,
+     * 구 엔진에서는 `ShellTerminalWidget` 이 나온다). 그러면 [list] 가 빈 목록을 주는데,
+     * "열린 탭이 없다" 와 구분되지 않아 조용히 새 탭이 열린다 — 이유를 말해줄 수 있게 한다.
+     */
+    fun hasUnusableTabs(project: Project): Boolean = contents(project).isNotEmpty() && list(project).isEmpty()
+
     private fun contents(project: Project): List<Content> = runCatching {
         ToolWindowManager.getInstance(project).getToolWindow("Terminal")
             ?.contentManager?.contents?.toList() ?: emptyList()
