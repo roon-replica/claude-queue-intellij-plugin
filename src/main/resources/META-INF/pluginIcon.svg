@@ -1,0 +1,6 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 큐에 쌓인 작업 — 아래로 갈수록 짧아져 '줄' 로 읽힌다 -->
+  <path d="M5 11h17M5 20h13M5 29h9" stroke="#6E7781" stroke-width="3.2" stroke-linecap="round"/>
+  <!-- 실행 — 카드 상태점의 '진행' 초록과 같은 값 -->
+  <path d="M26.5 12.5 L37 20 L26.5 27.5 Z" fill="#1F8B4C"/>
+</svg>

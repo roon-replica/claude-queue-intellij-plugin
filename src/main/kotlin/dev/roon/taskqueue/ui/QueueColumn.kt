@@ -160,4 +160,27 @@ class QueueColumn(
     }
 
     val selected: TaskEntry? get() = list.selectedValue
+
+    companion object {
+        /**
+         * 컬럼 헤더와 **같은 모양·같은 높이**의 줄.
+         * 구간 헤더(IN PROGRESS)와 다른 컬럼의 정렬용 빈 줄이 이것을 함께 써야
+         * 카드 시작 높이가 어긋나지 않는다.
+         *
+         * @param separator false 면 구분선 자리를 빈 여백으로 둔다 — 높이는 같고 선만 없다
+         */
+        fun headerRow(title: String, accent: JBColor, separator: Boolean = true): JPanel {
+            val label = JBLabel(title).apply {
+                font = JBFont.small().asBold()
+                border = JBUI.Borders.empty(6, 6)
+                foreground = accent
+            }
+            return JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = if (separator) JBUI.Borders.customLine(JBColor.border(), 0, 0, 1, 0)
+                else JBUI.Borders.emptyBottom(1)
+                add(label, BorderLayout.CENTER)
+            }
+        }
+    }
 }

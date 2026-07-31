@@ -264,11 +264,29 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     /** 보드가 화면을 다 쓴다 — 실제 출력은 claude 터미널 탭에 있으므로 로그 패널을 두지 않는다 */
     private fun buildBody(): OnePixelSplitter = OnePixelSplitter(false, 0.34f).apply {
-        firstComponent = todoColumn
+        firstComponent = aligned(todoColumn)
         secondComponent = OnePixelSplitter(false, 0.5f).apply {
-            firstComponent = activeArea
-            secondComponent = doneColumn
+            firstComponent = activeSection()
+            secondComponent = aligned(doneColumn)
         }
+    }
+
+    /**
+     * 방 컬럼들 위에 구간 이름을 세운다 — 탭 이름만 있으면 TODO·DONE 과 층위가 섞여
+     * "여기가 진행 영역" 이 읽히지 않는다.
+     */
+    private fun activeSection(): JPanel = JPanel(BorderLayout()).apply {
+        add(QueueColumn.headerRow("IN PROGRESS", StatusColors.RUNNING), BorderLayout.NORTH)
+        add(activeArea, BorderLayout.CENTER)
+    }
+
+    /**
+     * 진행 영역만 헤더가 두 줄(구간 + 탭 이름)이라 카드 시작 높이가 어긋난다.
+     * 같은 구성의 빈 줄을 얹어 맞춘다 — 선은 없고 높이만 같다.
+     */
+    private fun aligned(column: QueueColumn): JPanel = JPanel(BorderLayout()).apply {
+        add(QueueColumn.headerRow("", StatusColors.TODO, separator = false), BorderLayout.NORTH)
+        add(column, BorderLayout.CENTER)
     }
 
     /** 한 컬럼에서 고르면 나머지 선택을 지운다 — 선택은 항상 하나 */
@@ -423,6 +441,13 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun columnKeyOf(task: TaskEntry): String = task.terminalTab.ifEmpty { NEW_COLUMN }
 
     /**
+     * 컬럼 헤더 색. 탭마다 다른 색이라 어느 대화방인지 눈으로 구분된다 —
+     * 전부 진행 초록이면 컬럼끼리 안 갈린다. 탭이 아직 없는 칸은 중립 회색.
+     */
+    private fun accentOf(key: String): com.intellij.ui.JBColor =
+        if (key == NEW_COLUMN || key == PLACEHOLDER) StatusColors.TODO else RoomColors.of(key)
+
+    /**
      * 세울 컬럼들.
      *
      * **작업이 있는 방만 세우면 컬럼이 생겼다 사라졌다 한다.** 그래서 열려 있는 탭을 기준으로
@@ -461,7 +486,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         roomColumns.clear()
         wanted.forEach { room ->
             roomColumns[room] = kept[room] ?: QueueColumn(
-                titleOf(room), "Runs in order once promoted", strength, StatusColors.RUNNING, retryable,
+                titleOf(room), "Runs in order once promoted", strength, accentOf(room), retryable,
             ).also { wire(it) }
         }
 
