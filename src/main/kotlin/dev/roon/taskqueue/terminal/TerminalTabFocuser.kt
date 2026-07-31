@@ -3,9 +3,7 @@ package dev.roon.taskqueue.terminal
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowManager
-import com.intellij.terminal.JBTerminalWidget
 import com.intellij.ui.content.Content
-import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 
 /** 작업이 도는 터미널 탭을 보여준다 */
 object TerminalTabFocuser {
@@ -21,23 +19,22 @@ object TerminalTabFocuser {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(TERMINAL) ?: return false
 
         // 탭 선택을 activate 보다 먼저 한다 — activate 의 포커스 처리가 이전 탭을 다시 앞세운다
-        selectContent(toolWindow, tab.widget)
+        selectContent(toolWindow, tab)
         toolWindow.activate({
-            selectContent(toolWindow, tab.widget)
+            selectContent(toolWindow, tab)
             if (moveFocus) tab.focus()
         }, moveFocus, moveFocus)
         return true
     }
 
-    private fun selectContent(toolWindow: ToolWindow, widget: JBTerminalWidget) {
+    private fun selectContent(toolWindow: ToolWindow, tab: TerminalSessionRegistry.Tab) {
         val manager = toolWindow.contentManager
-        val content = manager.contents.firstOrNull { sameWidget(it, widget) } ?: return
+        val content = manager.contents.firstOrNull { sameTab(it, tab) } ?: return
         manager.setSelectedContent(content, false)
     }
 
-    private fun sameWidget(content: Content, widget: JBTerminalWidget): Boolean = runCatching {
-        TerminalToolWindowManager.getWidgetByContent(content) === widget
-    }.getOrDefault(false)
+    private fun sameTab(content: Content, tab: TerminalSessionRegistry.Tab): Boolean =
+        runCatching { tab.handle.matches(content) }.getOrDefault(false)
 
     private const val TERMINAL = "Terminal"
 }

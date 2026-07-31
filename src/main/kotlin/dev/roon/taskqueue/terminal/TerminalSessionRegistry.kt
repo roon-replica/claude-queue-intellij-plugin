@@ -2,10 +2,7 @@ package dev.roon.taskqueue.terminal
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
-import com.intellij.openapi.util.Disposer
-import com.intellij.terminal.JBTerminalWidget
-import com.jediterm.terminal.ProcessTtyConnector
-import org.jetbrains.plugins.terminal.ShellTerminalWidget
+import com.intellij.ui.content.Content
 
 /**
  * 작업을 실행할 터미널 탭 목록.
@@ -16,9 +13,9 @@ import org.jetbrains.plugins.terminal.ShellTerminalWidget
  * - **외부 탭**(`ours=false`): 사용자가 직접 연 탭. 훅을 심을 수 없고 세션 ID 도 모른다.
  *   프롬프트를 보낸 뒤 jsonl 에서 찾아내 [bindSession] 으로 채운다.
  *
- * 식별은 `JBTerminalWidget` 참조로 한다. **`asNewWidget()` 은 호출마다 새 어댑터를 만들어
- * 동일성 비교가 깨진다**(실측: 캐시 필드가 없다) — 그래서 신 API 객체를 키로 쓰지 않는다.
- * 탭 제목도 claude 가 실행되며 바뀌므로(예: "✳ Claude Code") 키로 쓸 수 없다.
+ * 탭 조작은 [TerminalHandle] 뒤에 있다 — 엔진(Classic/Reworked) 차이를 이 클래스가 모른다.
+ * 식별은 그 핸들의 **참조**로 한다. 탭 제목은 claude 가 실행되며 바뀌므로(예: "✳ Claude Code")
+ * 키로 쓸 수 없다.
  */
 @Service
 class TerminalSessionRegistry {
@@ -27,77 +24,31 @@ class TerminalSessionRegistry {
 
     class Tab(
         val label: String,
-        val widget: JBTerminalWidget,
+        val handle: TerminalHandle,
         /** 외부 탭은 프롬프트를 보내고 발견하기 전까지 null */
         @Volatile var sessionId: String?,
         /** 우리가 띄워 Stop 훅을 심은 탭인지 */
         val ours: Boolean,
     ) {
-        /**
-         * 대화형 입력창에 한 줄 밀어넣는다. 쓰기용이라 신 API 어댑터를 그때그때 만들어도 된다.
-         *
-         * **먼저 입력창을 비운다.** 인터럽트한 세션에는 사용자가 치다 만 글자가 남아 있을 수
-         * 있고, 그대로 보내면 앞글자와 이어붙어 엉뚱한 지시가 된다.
-         * 한 번의 write 로 보내 비우기와 입력 사이에 끼어들 틈을 두지 않는다.
-         */
-        fun write(text: String): Result<Unit> = runCatching {
-            widget.asNewWidget().ttyConnectorAccessor.executeWithTtyConnector { connector ->
-                connector.write(CLEAR_INPUT + text + "\r")
-            }
-        }
-
-        fun focus() = runCatching { widget.asNewWidget().requestFocus() }
-
-        /** 셸 조작이 가능한 탭인지 — 명령 실행/실행중 판별에 필요하다 */
-        val shell: ShellTerminalWidget? get() = widget as? ShellTerminalWidget
+        fun write(text: String): Result<Unit> = handle.write(text)
+        fun runCommand(command: String): Result<Unit> = handle.runCommand(command)
+        fun focus() = runCatching { handle.requestFocus() }
 
         /** tty 가 붙었는지. 붙기 전에는 명령을 넣어도 유실된다 */
-        val ready: Boolean
-            get() = runCatching { widget.ttyConnector?.isConnected == true }.getOrDefault(false)
+        val ready: Boolean get() = handle.ready
 
-        /**
-         * 그 탭에서 무언가 돌고 있는지. **셸 통합이 없으면 예외가 나 null 이 된다** —
-         * null 을 "돌고 있다" 로 해석하면 빈 셸에 프롬프트를 타이핑하게 되므로 주의해야 한다.
-         */
-        fun hasRunningCommand(): Boolean? =
-            runCatching { shell?.hasRunningCommands() }.getOrNull()
+        /** @return null = 돌고 있는지 알 수 없음 */
+        fun hasRunningCommand(): Boolean? = handle.hasRunningCommand()
 
-        /**
-         * 이 탭에서 **claude 가 실제로 돌고 있는지** 프로세스 트리로 확인한다.
-         *
-         * `hasRunningCommands()` 는 셸 통합에 의존해 답을 못 낼 때가 있다. 그때 추측하면
-         * 자연어 프롬프트가 셸 명령으로 실행되는 사고가 난다(실측) — 그래서 사실을 본다.
-         *
-         * @return null = 프로세스를 들여다볼 수 없음
-         */
-        fun claudeRunning(): Boolean? {
-            val connector = widget.ttyConnector ?: return null
-            val shellProcess = (connector as? ProcessTtyConnector)?.process ?: return null
-            val handle = handleOf(shellProcess) ?: return null
-            return runCatching {
-                handle.descendants().anyMatch { it.info().command().orElse("").contains(CLAUDE_MARKER) }
-            }.getOrNull()
-        }
-
-        /**
-         * 셸 프로세스의 핸들.
-         *
-         * **`toHandle()` 을 바로 쓰면 안 된다** — pty 프로세스(`UnixPtyProcess`)는 이를 재정의하지
-         * 않아 `UnsupportedOperationException` 을 던진다(클래스 시그니처로 확인). 그러면 판별이
-         * 'unknown' 이 되어 직접 연 claude 탭이 'busy' 로 거부됐다.
-         * `pid()` 는 구현돼 있으므로 그것으로 핸들을 얻는다.
-         */
-        private fun handleOf(process: Process): ProcessHandle? {
-            runCatching { return ProcessHandle.of(process.pid()).orElse(null) }
-            return runCatching { process.toHandle() }.getOrNull()
-        }
+        /** @return null = 프로세스를 들여다볼 수 없음 */
+        fun claudeRunning(): Boolean? = handle.claudeRunning()
     }
 
-    /** 같은 물리 탭이 두 번 등록되지 않게 위젯 기준으로도 지운다 */
-    fun register(label: String, widget: JBTerminalWidget, sessionId: String?, ours: Boolean): Tab {
-        val tab = Tab(label, widget, sessionId, ours)
+    /** 같은 물리 탭이 두 번 등록되지 않게 핸들 기준으로도 지운다 */
+    fun register(label: String, handle: TerminalHandle, sessionId: String?, ours: Boolean): Tab {
+        val tab = Tab(label, handle, sessionId, ours)
         synchronized(tabs) {
-            tabs.removeAll { it.label == label || it.widget === widget }
+            tabs.removeAll { it.label == label || it.handle === handle }
             tabs += tab
         }
         return tab
@@ -114,12 +65,12 @@ class TerminalSessionRegistry {
         Unit
     }
 
-    fun findByWidget(widget: JBTerminalWidget): Tab? =
-        aliveTabs().firstOrNull { it.widget === widget }
+    /** 그 Content 에 해당하는 등록된 탭 — 엔진별 매칭은 핸들이 판단한다 */
+    fun findByContent(content: Content): Tab? = aliveTabs().firstOrNull { it.handle.matches(content) }
 
     /** 살아있는 탭만 */
     fun aliveTabs(): List<Tab> = synchronized(tabs) {
-        tabs.removeAll { !isAlive(it.widget) }
+        tabs.removeAll { !it.handle.alive }
         tabs.toList()
     }
 
@@ -134,24 +85,7 @@ class TerminalSessionRegistry {
         return "$base ($i)"
     }
 
-    /**
-     * 탭이 닫혔는지.
-     *
-     * `ttyConnector` 는 **세션 시작 전에도 null** 이다 — null 을 죽음으로 보면 방금 고른 탭이
-     * 곧바로 목록에서 사라지고 "탭이 없다" 로 실패한다(실측). null 은 "아직" 으로 본다.
-     */
-    private fun isAlive(widget: JBTerminalWidget): Boolean = runCatching {
-        if (Disposer.isDisposed(widget)) return false
-        widget.ttyConnector?.isConnected ?: true
-    }.getOrDefault(false)
-
     companion object {
-        /** claude 실행 파일 경로에 항상 들어가는 조각 (버전 디렉토리 포함) */
-        private const val CLAUDE_MARKER = "claude"
-
-        /** 입력창 비우기 = Ctrl-U. 빈 입력창에 보내도 아무 일도 일어나지 않는다 */
-        private const val CLEAR_INPUT = "\u0015"
-
         fun getInstance(): TerminalSessionRegistry = service()
     }
 }

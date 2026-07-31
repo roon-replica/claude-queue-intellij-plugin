@@ -11,10 +11,10 @@ import dev.roon.taskqueue.session.SessionPaths
 import dev.roon.taskqueue.session.SessionScanner
 import dev.roon.taskqueue.session.SessionState
 import dev.roon.taskqueue.session.SessionWatcher
+import dev.roon.taskqueue.terminal.TerminalEngines
+import dev.roon.taskqueue.terminal.TerminalHandle
 import dev.roon.taskqueue.terminal.TerminalSessionRegistry
 import dev.roon.taskqueue.terminal.TerminalTabFocuser
-import org.jetbrains.plugins.terminal.ShellTerminalWidget
-import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ScheduledFuture
@@ -186,13 +186,17 @@ class TerminalTaskLauncher(
         task.hookSessionId = sessionId
 
         val command = buildCommand(exe, sessionId, hooks.hookCommand(sessionId), writePromptFile(task))
-        val widget = createTab(project, task, registry, sessionId)
+        val handle = createTab(project, task, registry, sessionId)
+        if (handle == null) {
+            onDone(TaskResult(-1, SessionState.UNKNOWN, null, "Could not open a terminal tab"))
+            return
+        }
 
         awaitHookStop(hooks, sessionId, sentAt, running, onLine, onState, onDone)
 
-        // executeCommand 는 셸 프롬프트 준비를 기다린다 (TTY 직접 쓰기는 초기화 중 유실된다)
+        // runCommand 는 셸 프롬프트 준비를 기다린다 (TTY 직접 쓰기는 초기화 중 유실된다)
         onLine("$ $command")
-        runCatching { widget.executeCommand(command) }
+        handle.runCommand(command)
             .onFailure { onLine("· command failed: ${it.message}") }
         onState(SessionState.WORKING)
     }
@@ -215,17 +219,11 @@ class TerminalTaskLauncher(
         onState: (SessionState) -> Unit,
         onDone: (TaskResult) -> Unit,
     ) {
-        val shell = tab.shell
-        if (shell == null) {
-            onDone(TaskResult(-1, SessionState.UNKNOWN, null, "Cannot run a command in that tab"))
-            return
-        }
-
         val sessionId = UUID.randomUUID().toString()
         task.sessionId = sessionId
         task.hookSessionId = sessionId
         // 이제 이 탭은 우리가 훅을 심은 탭이다 — 다음 작업은 훅 경로로 이어 쓴다
-        registry.register(tab.label, tab.widget, sessionId, ours = true)
+        registry.register(tab.label, tab.handle, sessionId, ours = true)
 
         val command = buildCommand(exe, sessionId, hooks.hookCommand(sessionId), writePromptFile(task))
         awaitHookStop(hooks, sessionId, sentAt, running, onLine, onState, onDone)
@@ -233,7 +231,7 @@ class TerminalTaskLauncher(
         // 포커스는 옮기지 않는다 — awaitTabReady 가 이미 탭을 보이게 해뒀다
         onLine("· starting claude in the shell tab")
         onLine("$ $command")
-        runCatching { shell.executeCommand(command) }
+        tab.runCommand(command)
             .onFailure { onLine("· command failed: ${it.message}") }
         onState(SessionState.WORKING)
     }
@@ -410,17 +408,15 @@ class TerminalTaskLauncher(
         task: TaskEntry,
         registry: TerminalSessionRegistry,
         sessionId: String,
-    ): ShellTerminalWidget {
+    ): TerminalHandle? {
         val label = registry.uniqueLabel(task.shortLabel().take(20).ifEmpty { "claude" })
-        // requestFocus=false — 자동 진행이 사용자 화면을 낚아채지 않게. 대신 아래에서 탭만 보여준다
-        val widget = TerminalToolWindowManager.getInstance(project)
-            .createLocalShellWidget(task.cwd, label, false)
-        registry.register(label, widget, sessionId, ours = true)
+        val handle = TerminalEngines.createTab(project, task.cwd, label) ?: return null
+        registry.register(label, handle, sessionId, ours = true)
         task.terminalTab = label
         // 탭이 보이지 않으면 터미널이 세션 시작을 미룬다(deferSessionStartUntilUiShown) —
         // 보이게만 하고 키보드 포커스는 그대로 둔다
         TerminalTabFocuser.focus(project, label, moveFocus = false)
-        return widget
+        return handle
     }
 
     /** 대화형 입력은 개행이 곧 전송이라 한 줄로 만든다 */
