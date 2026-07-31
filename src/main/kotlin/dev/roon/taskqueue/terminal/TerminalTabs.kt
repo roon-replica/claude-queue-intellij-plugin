@@ -34,7 +34,7 @@ object TerminalTabs {
     fun list(project: Project): List<Choice> {
         val registry = TerminalSessionRegistry.getInstance()
         return contents(project).mapNotNull { content ->
-            val handle = TerminalEngines.handleFor(content) ?: return@mapNotNull null
+            val handle = TerminalEngines.handleFor(project, content) ?: return@mapNotNull null
             Choice(
                 handle = handle,
                 title = content.displayName?.takeIf { it.isNotBlank() } ?: "Terminal",
