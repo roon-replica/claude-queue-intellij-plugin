@@ -20,6 +20,9 @@
     <change-notes><![CDATA[
         <h4>0.6.1</h4>
         <ul>
+          <li>Requires 2025.3 or newer now. The reworked terminal — the default engine since
+              2026.1 — only exists from 2025.3, and supporting it is what makes tab reuse work on a
+              default setup.</li>
           <li>Right-click a selection in the editor and "Add to Task Queue" now fills the task input
               with the file, line range and code, ready for you to type what to do — instead of a
               one-line dialog you couldn't edit.</li>

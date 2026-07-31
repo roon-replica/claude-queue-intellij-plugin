@@ -12,7 +12,7 @@ step in at any time.
 
 ## Requirements
 
-IntelliJ IDEA 2024.3+ and the `claude` CLI on your `PATH`. Both the classic and the reworked
+IntelliJ IDEA 2025.3+ and the `claude` CLI on your `PATH`. Both the classic and the reworked
 terminal engine work.
 
 ## Install
