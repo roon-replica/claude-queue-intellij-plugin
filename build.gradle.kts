@@ -37,6 +37,16 @@ intellijPlatform {
     instrumentCode = false
 
     /**
+     * 마켓플레이스 업로드. **토큰은 환경변수로만 받는다** — 빌드 파일에 박으면 그대로 커밋된다.
+     * `PUBLISH_TOKEN=xxx ./gradlew publishPlugin`
+     *
+     * 첫 업로드는 웹에서 수동으로 해야 한다(라이선스·카테고리 지정 + 심사). 그 뒤부터 이걸 쓴다.
+     */
+    publishing {
+        token = providers.environmentVariable("PUBLISH_TOKEN")
+    }
+
+    /**
      * 신 터미널 API 가 있는 버전만 정적 검증한다.
      *
      * 그 API 는 253 부터 있고(검증기 확인), 그 아래(243/251/252)에서는 **패키지 자체가 없어**

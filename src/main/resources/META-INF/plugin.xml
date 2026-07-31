@@ -18,6 +18,20 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.6.1</h4>
+        <ul>
+          <li>Right-click a selection in the editor and "Add to Task Queue" now fills the task input
+              with the file, line range and code, ready for you to type what to do — instead of a
+              one-line dialog you couldn't edit.</li>
+          <li>Renaming a terminal tab renames its column too. Titles that Claude Code sets itself
+              are ignored, so every tab doesn't end up with the same name.</li>
+          <li>The running task is marked with a border that gently pulses, and a card that just
+              moved is outlined instead of tinted — easier to read the text on it.</li>
+          <li>Cards show more of the prompt before cutting it off, with the full text on hover.</li>
+          <li>Finished tasks are listed newest first.</li>
+          <li>Fixed: dragging a task onto a terminal's column failed with "That terminal tab is
+              gone" unless you had run something in that tab first.</li>
+        </ul>
         <h4>0.6.0</h4>
         <ul>
           <li>Tasks in different terminal tabs now run at the same time. Within a tab they still run
