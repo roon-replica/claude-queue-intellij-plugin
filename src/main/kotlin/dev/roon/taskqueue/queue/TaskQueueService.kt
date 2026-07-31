@@ -323,6 +323,22 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     /** 도는 것 전부 취소 */
     fun cancelRunning() = runningTasks().forEach { cancel(it.id) }
 
+    /**
+     * 대기 항목을 다른 방으로 옮긴다 (컬럼 사이 드래그).
+     * 옮긴 방이 비어 있으면 곧바로 시작될 수 있다 — 방 사이는 병렬이다.
+     *
+     * **실행 중 항목은 옮기지 않는다** — 이미 그 탭의 claude 가 물고 있다.
+     * 묶음도 푼다: 다른 탭으로 갔는데 묶음 규칙이 옛 탭을 물려주면 안 된다.
+     */
+    fun moveToRoom(id: String, terminalTab: String) {
+        val task = find(id)?.takeIf { it.status == TaskStatus.QUEUED } ?: return
+        if (task.terminalTab == terminalTab) return
+        task.terminalTab = terminalTab
+        task.batchId = null
+        notifyChanged()
+        maybeStartNext()
+    }
+
     /** 그 작업의 구독을 뗀다 — 방을 비워 다음 항목이 들어올 수 있게 */
     private fun detach(task: TaskEntry) {
         val room = running.entries.firstOrNull { it.value.taskId == task.id }?.key ?: return

@@ -333,6 +333,32 @@ class TaskQueueServiceTest {
     }
 
     @Test
+    fun `대기 항목을 빈 방으로 옮기면 곧바로 돈다`() {
+        val a = queue.addTodo("작업A", "/tmp", terminalTab = "claude")
+        val b = queue.addTodo("작업B", "/tmp", terminalTab = "claude")
+        queue.promote(a.id)
+        queue.promote(b.id)
+        assertEquals(TaskStatus.QUEUED, b.status)
+
+        queue.moveToRoom(b.id, "api")
+
+        assertEquals(TaskStatus.RUNNING, b.status)
+        assertEquals("api", b.terminalTab)
+        // 두 방이 동시에 돈다
+        assertEquals(2, queue.runningTasks().size)
+    }
+
+    @Test
+    fun `실행 중 항목은 방을 옮기지 않는다`() {
+        val a = queue.addTodo("작업A", "/tmp", terminalTab = "claude")
+        queue.promote(a.id)
+
+        queue.moveToRoom(a.id, "api")
+
+        assertEquals("claude", a.terminalTab)
+    }
+
+    @Test
     fun `질문 대기(WAITING) 는 완료로 보지 않는다`() {
         val task = enqueueAndRun("작업", "/tmp")
         fake.emitState(SessionState.WAITING)

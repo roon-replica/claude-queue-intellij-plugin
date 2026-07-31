@@ -27,9 +27,11 @@ import dev.roon.taskqueue.queue.ExecMode
 import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
+import dev.roon.taskqueue.terminal.TerminalSessionRegistry
 import dev.roon.taskqueue.terminal.TerminalTabs
 import dev.roon.taskqueue.terminal.TerminalTabFocuser
 import java.awt.BorderLayout
+import java.awt.GridLayout
 import java.awt.MouseInfo
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
@@ -86,18 +88,26 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         when (task.status) {
             // 인터럽트해도 훅이 오지 않아 그대로 남는다 — 같은 세션에 다시 보낸다
             TaskStatus.RUNNING -> true
-            // 도는 게 있으면 직렬 실행 원칙상 눌러도 할 일이 없다
-            TaskStatus.QUEUED -> queue.runningTask() == null
+            // 그 방이 비어 있을 때만 — 방 안에서는 순차라 도는 중엔 눌러도 할 일이 없다
+            TaskStatus.QUEUED -> queue.runningIn(queue.roomOf(task)) == null
             else -> false
         }
     }
 
     private val todoColumn = QueueColumn("TODO", "Jot down tasks here", strength, StatusColors.TODO)
-    private val activeColumn = QueueColumn(
-        "IN PROGRESS", "Runs in order once promoted", strength, StatusColors.RUNNING, retryable,
-    )
     private val doneColumn = QueueColumn("DONE", "Finished tasks", strength, StatusColors.DONE)
-    private val columns: List<QueueColumn> = listOf(todoColumn, activeColumn, doneColumn)
+
+    /**
+     * 방(터미널 탭)마다 컬럼 하나. 방 사이는 병렬로 도니 나란히 세우는 게 실제 동작과 맞는다.
+     * 순서를 지키려고 LinkedHashMap 을 쓴다 — 방이 늘어도 기존 컬럼이 튀지 않게.
+     */
+    private val roomColumns = linkedMapOf<String, QueueColumn>()
+
+    /** 방 컬럼들이 들어가는 자리. 방이 없으면 빈 컬럼 하나를 세워 자리를 지킨다 */
+    private val activeArea = JPanel(GridLayout(1, 0, JBUI.scale(1), 0))
+
+    private val columns: List<QueueColumn>
+        get() = listOf(todoColumn) + roomColumns.values + doneColumn
 
     private fun repaintColumns() = columns.forEach { it.list.repaint() }
 
@@ -105,7 +115,15 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
      * 실행 중 카드의 경과 시간을 1초마다 갱신한다.
      * 실행 중 작업이 없으면 멈춘다 — 유휴 상태에서 헛돌 이유가 없다.
      */
-    private val ticker = Timer(1_000) { activeColumn.list.repaint() }
+    private val ticker = Timer(1_000) { roomColumns.values.forEach { it.list.repaint() } }
+
+    /**
+     * 터미널 탭이 열리고 닫히는 것은 큐 이벤트가 아니라서 [refresh] 가 불리지 않는다.
+     * 주기적으로 훑어 컬럼 구성이 달라졌을 때만 다시 그린다 — 매번 갈아엎으면 선택이 튄다.
+     */
+    private val tabWatcher = Timer(TAB_POLL_MS) {
+        if (columnKeys() != roomColumns.keys.toList()) refresh()
+    }
 
     private val statusLabel = JBLabel().apply {
         font = JBFont.small()
@@ -133,6 +151,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         refreshCliStatus()
         queue.recentLog().lastOrNull()?.let { appendLog(it) }
         refresh()
+        tabWatcher.start()
     }
 
     // --- 레이아웃 ---
@@ -247,14 +266,23 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun buildBody(): OnePixelSplitter = OnePixelSplitter(false, 0.34f).apply {
         firstComponent = todoColumn
         secondComponent = OnePixelSplitter(false, 0.5f).apply {
-            firstComponent = activeColumn
+            firstComponent = activeArea
             secondComponent = doneColumn
         }
     }
 
     /** 한 컬럼에서 고르면 나머지 선택을 지운다 — 선택은 항상 하나 */
     private fun wireColumns() {
-        columns.forEach { column ->
+        listOf(todoColumn, doneColumn).forEach { wire(it) }
+        TaskDragAndDrop.install(columns, queue::reorderGroup, ::dropTo, fixed = setOf(doneColumn))
+
+        // 완료 정리는 완료 컬럼에만 해당되는 동작이라 그 헤더에 둔다
+        doneColumn.setHeaderAction(AllIcons.Actions.GC, "Clear finished and failed tasks") { queue.clearFinished() }
+    }
+
+    /** 컬럼 하나에 선택·클릭·단축키를 건다. 방 컬럼은 나중에 생기므로 따로 뽑아둔다 */
+    private fun wire(column: QueueColumn) {
+        run {
             column.list.addListSelectionListener { e ->
                 if (e.valueIsAdjusting) return@addListSelectionListener
                 val task = column.selected ?: return@addListSelectionListener
@@ -294,12 +322,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 }
             })
         }
-
-        columns.forEach { registerShortcuts(it) }
-        TaskDragAndDrop.install(columns, queue::reorderGroup, ::dropTo, fixed = setOf(doneColumn))
-
-        // 완료 정리는 완료 컬럼에만 해당되는 동작이라 그 헤더에 둔다
-        doneColumn.setHeaderAction(AllIcons.Actions.GC, "Clear finished and failed tasks") { queue.clearFinished() }
+        registerShortcuts(column)
     }
 
     /**
@@ -370,12 +393,85 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     }
 
     /** 다른 컬럼에 떨어뜨렸을 때의 상태 이동 */
-    private fun dropTo(task: TaskEntry, target: QueueColumn) = when {
-        target === todoColumn && task.status == TaskStatus.QUEUED -> queue.demote(task.id)
-        target === activeColumn && task.status == TaskStatus.TODO ->
-            chooseTerminal { tab -> queue.promote(task.id, tab) }
-        // 완료 컬럼으로 끌어오거나, 실행 중 항목을 옮기는 건 허용하지 않는다
-        else -> Unit
+    private fun dropTo(task: TaskEntry, target: QueueColumn) {
+        val key = roomColumns.entries.firstOrNull { it.value === target }?.key
+        when {
+            target === todoColumn && task.status == TaskStatus.QUEUED -> queue.demote(task.id)
+            // 실행 중 카드는 방을 옮기지 않는다 — 이미 그 탭의 claude 가 물고 있다
+            task.status == TaskStatus.RUNNING -> Unit
+            key == null -> Unit // 완료 컬럼 등
+            task.status == TaskStatus.TODO -> queue.promote(task.id, tabOf(key))
+            // 대기 항목을 다른 방으로 — 그 탭에서 돌게 된다
+            task.status == TaskStatus.QUEUED -> queue.moveToRoom(task.id, tabOf(key))
+            else -> Unit
+        }
+    }
+
+    /** 컬럼 키 → 실행할 탭 이름. '새 대화' 컬럼은 탭이 정해지지 않은 상태다 */
+    private fun tabOf(key: String): String = if (key == NEW_COLUMN) "" else key
+
+    private fun titleOf(key: String): String = when (key) {
+        PLACEHOLDER -> "IN PROGRESS"
+        NEW_COLUMN -> "NEW CONVERSATION"
+        else -> key.uppercase()
+    }
+
+    /**
+     * 카드가 들어갈 컬럼. **탭 이름 하나로만 가른다** — 서비스의 방은 묶음까지 구분하지만
+     * 화면에서는 아직 탭이 없는 것들을 '새 대화' 한 칸에 모은다.
+     */
+    private fun columnKeyOf(task: TaskEntry): String = task.terminalTab.ifEmpty { NEW_COLUMN }
+
+    /**
+     * 세울 컬럼들.
+     *
+     * **작업이 있는 방만 세우면 컬럼이 생겼다 사라졌다 한다.** 그래서 열려 있는 탭을 기준으로
+     * 삼는다 — 탭을 열고 닫을 때만 바뀌므로 화면이 안정적이고, 비어 있는 탭 컬럼이
+     * 드롭 대상이 되어 "저 탭에서 돌려" 를 드래그로 표현할 수 있다.
+     */
+    private fun columnKeys(): List<String> {
+        val registry = runCatching { TerminalSessionRegistry.getInstance() }.getOrNull()
+        // 이 프로젝트의 터미널 탭 전부. 우리가 등록한 탭은 그 라벨을 쓴다 —
+        // claude 가 실행되며 탭 제목을 바꾸므로(예: "✳ Claude Code") 제목만 믿으면 컬럼이 갈라진다
+        val open = runCatching {
+            TerminalTabs.contents(project).mapNotNull { content ->
+                registry?.findByContent(content)?.label
+                    ?: content.displayName?.takeIf { it.isNotBlank() }
+            }
+        }.getOrDefault(emptyList())
+
+        // 탭이 닫혔는데 아직 그 탭을 물고 있는 작업이 남아 있을 수 있다 — 그 카드가 사라지면 안 된다
+        val withTasks = queue.tasks.filter { it.status.isActive }.map(::columnKeyOf)
+
+        val keys = (open + withTasks).distinct()
+        // '새 대화' 칸은 갈 곳 없는 작업이 있을 때만 — 늘 띄우면 빈 칸이 거슬린다
+        val needsNew = NEW_COLUMN in withTasks
+        val result = keys.filter { it != NEW_COLUMN } + if (needsNew) listOf(NEW_COLUMN) else emptyList()
+        return result.ifEmpty { listOf(PLACEHOLDER) }
+    }
+
+    /**
+     * 방 목록이 바뀌었을 때만 컬럼을 다시 세운다 — 매번 갈아엎으면 선택·스크롤이 튄다.
+     * 새로 만든 컬럼에는 기존 컬럼과 같은 배선(선택·클릭·단축키·드래그)을 걸어준다.
+     */
+    private fun syncRoomColumns(wanted: List<String>) {
+        if (wanted == roomColumns.keys.toList()) return
+
+        val kept = roomColumns.filterKeys { it in wanted }
+        roomColumns.clear()
+        wanted.forEach { room ->
+            roomColumns[room] = kept[room] ?: QueueColumn(
+                titleOf(room), "Runs in order once promoted", strength, StatusColors.RUNNING, retryable,
+            ).also { wire(it) }
+        }
+
+        activeArea.removeAll()
+        roomColumns.values.forEach { activeArea.add(it) }
+        activeArea.revalidate()
+        activeArea.repaint()
+
+        // 목표 컬럼 목록이 바뀌었으므로 드래그 핸들러를 다시 건다 (교체라 중복되지 않는다)
+        TaskDragAndDrop.install(columns, queue::reorderGroup, ::dropTo, fixed = setOf(doneColumn))
     }
 
     // --- 동작 ---
@@ -480,8 +576,11 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
     private fun refresh() {
         val all = queue.tasks
+        syncRoomColumns(columnKeys())
         todoColumn.setTasks(all.filter { it.status == TaskStatus.TODO })
-        activeColumn.setTasks(all.filter { it.status.isActive })
+        roomColumns.forEach { (key, column) ->
+            column.setTasks(all.filter { it.status.isActive && columnKeyOf(it) == key })
+        }
         doneColumn.setTasks(all.filter { it.status.isFinished })
         doneColumn.setHeaderActionEnabled(all.any { it.status.isFinished })
 
@@ -520,6 +619,15 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun ui(block: () -> Unit) = ApplicationManager.getApplication().invokeLater(block)
 
     private companion object {
+        /** 아직 탭이 정해지지 않은 작업들이 모이는 컬럼 */
+        const val NEW_COLUMN = "\u0000new"
+
+        /** 보여줄 탭도 작업도 없을 때 자리를 지키는 빈 컬럼 */
+        const val PLACEHOLDER = "\u0000none"
+
+        /** 터미널 탭 열림·닫힘 감시 주기 */
+        const val TAB_POLL_MS = 2_000
+
         const val NEW_TERMINAL = "New terminal"
 
         /** 히스토리 팔레트에 한 번에 보이는 줄 수 (나머지는 스크롤) */
@@ -566,5 +674,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         queue.removeLogListener(logListener)
         highlighter.stop()
         ticker.stop()
+        tabWatcher.stop()
     }
 }
