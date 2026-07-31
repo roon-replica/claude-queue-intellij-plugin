@@ -41,6 +41,7 @@ import java.io.File
 import javax.swing.AbstractAction
 import javax.swing.Icon
 import javax.swing.JComponent
+import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.KeyStroke
 import javax.swing.Timer
@@ -274,8 +275,17 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             .createPopupChooserBuilder(items)
             .setTitle("Recent prompts")
             .setVisibleRowCount(HISTORY_ROWS)
-            .setRenderer(SimpleListCellRenderer.create { label, value, _ ->
-                label.text = value.replace(Regex("\\s+"), " ").trim()
+            // create(...) 는 제거 예정이라 상속으로 쓴다 (클래스 자체는 살아 있다)
+            .setRenderer(object : SimpleListCellRenderer<String>() {
+                override fun customize(
+                    list: JList<out String>,
+                    value: String,
+                    index: Int,
+                    selected: Boolean,
+                    hasFocus: Boolean,
+                ) {
+                    text = value.replace(Regex("\\s+"), " ").trim()
+                }
             })
             .setItemChosenCallback { chosen ->
                 promptField.text = chosen

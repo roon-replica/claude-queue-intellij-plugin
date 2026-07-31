@@ -1,8 +1,8 @@
 package dev.roon.taskqueue.terminal
 
 import com.intellij.openapi.project.Project
+import com.intellij.terminal.JBTerminalWidget
 import com.intellij.ui.content.Content
-import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 
 /**
@@ -49,9 +49,14 @@ object TerminalEngines {
             ReworkedTerminalTabs.createTab(project, cwd, label)?.let { return it }
         }
         return runCatching {
-            val widget: ShellTerminalWidget = TerminalToolWindowManager.getInstance(project)
-                .createLocalShellWidget(cwd, label, false)
-            ClassicTerminalHandle(widget)
+            // createLocalShellWidget 은 제거 예정 — 엔진 중립 API 로 만들고 구 위젯으로 변환한다.
+            // 마지막 인자는 deferSessionStartUntilUiShown: false 로 두면 탭을 화면에 띄우지
+            // 않아도 세션이 시작된다(구 API 에는 없던 이점).
+            val widget = TerminalToolWindowManager.getInstance(project)
+                .createShellWidget(cwd, label, false, false)
+            val classic = JBTerminalWidget.asJediTermWidget(widget)
+                ?: error("not a classic terminal widget")
+            ClassicTerminalHandle(classic)
         }.getOrNull()
     }
 }

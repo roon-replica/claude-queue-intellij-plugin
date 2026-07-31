@@ -3,8 +3,8 @@ package dev.roon.taskqueue.cli
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.configurations.PathEnvironmentVariableUtil
 import com.intellij.execution.process.OSProcessHandler
-import com.intellij.execution.process.ProcessAdapter
 import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.process.ProcessListener
 import com.intellij.execution.util.ExecUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
@@ -88,7 +88,9 @@ class ClaudeCli {
         private val onEvent: (StreamEvent) -> Unit,
         private val onRawLine: (String) -> Unit,
         private val onFinish: (Int) -> Unit,
-    ) : ProcessAdapter() {
+    ) : ProcessListener {
+        // ProcessAdapter 는 제거 예정 — ProcessListener 의 메서드가 모두 default 라
+        // 필요한 것만 구현하면 된다
         private val buffer = StringBuilder()
 
         override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
