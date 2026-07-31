@@ -67,8 +67,13 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     /** 시간 주입 — 테스트 결정성 확보 */
     var clock: () -> Long = { System.currentTimeMillis() }
 
-    private var running: RunningTask? = null
-    private var runningId: String? = null
+    /**
+     * 방(터미널 탭)마다 도는 작업. **방 하나에 하나** — 방 사이는 병렬, 방 안은 순차다.
+     * 키는 [roomOf], 값은 그 방에서 도는 작업 id 와 러너 핸들.
+     */
+    private val running = mutableMapOf<String, Run>()
+
+    private class Run(val taskId: String, val handle: RunningTask)
 
     /** 자동 진행 여부. false 면 한 건 끝나도 다음을 시작하지 않는다 */
     var autoAdvance: Boolean = true
@@ -81,7 +86,31 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
 
     fun queued(): List<TaskEntry> = state.tasks.filter { it.status == TaskStatus.QUEUED }
 
-    fun runningTask(): TaskEntry? = runningId?.let { id -> state.tasks.find { it.id == id } }
+    /** 지금 도는 작업들 (방마다 최대 하나) */
+    fun runningTasks(): List<TaskEntry> =
+        running.values.mapNotNull { run -> state.tasks.find { it.id == run.taskId } }
+
+    /** 도는 게 하나라도 있는지 — 툴바 활성 판정 등 */
+    fun runningTask(): TaskEntry? = runningTasks().firstOrNull()
+
+    /**
+     * 작업이 속한 방. **탭이 곧 방**이고, 탭이 아직 없으면 묶음으로, 그것도 없으면
+     * 공용 '새 대화' 방으로 묶는다 — 탭 없는 작업마다 방을 만들면 TODO 를 올릴 때
+     * claude 세션이 그 수만큼 동시에 뜬다.
+     */
+    fun roomOf(task: TaskEntry): String = when {
+        task.terminalTab.isNotEmpty() -> task.terminalTab
+        task.batchId != null -> "batch:${task.batchId}"
+        else -> NEW_ROOM
+    }
+
+    /** 그 방에서 도는 작업 */
+    fun runningIn(room: String): TaskEntry? =
+        running[room]?.let { run -> state.tasks.find { it.id == run.taskId } }
+
+    /** 화면에 세울 방 목록 — 대기·실행 중인 작업이 있는 방만, 처음 등장한 순서로 */
+    fun activeRooms(): List<String> =
+        state.tasks.filter { it.status.isActive }.map(::roomOf).distinct()
 
     fun find(id: String): TaskEntry? = state.tasks.find { it.id == id }
 
@@ -206,7 +235,7 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
 
     /** 대기 중 항목 제거. 실행 중이면 취소 후 제거 */
     fun remove(id: String) {
-        if (runningId == id) cancelRunning()
+        cancel(id)
         state.tasks.removeAll { it.id == id }
         notifyChanged()
     }
@@ -263,9 +292,7 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         val task = find(id) ?: return
         if (task.status != TaskStatus.RUNNING) return
         // 옛 구독을 먼저 뗀다 — 안 떼면 지난 턴의 Stop 신호가 이 재전송의 완료로 읽힌다
-        running?.cancel()
-        running = null
-        runningId = null
+        detach(task)
         startTask(task)
     }
 
@@ -281,17 +308,25 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     fun runNow(id: String) {
         val task = find(id) ?: return
         if (task.status != TaskStatus.QUEUED) return
-        // 직렬 실행이 원칙 — 도는 게 있으면 그것이 끝나야 한다
-        if (runningId != null) return
+        // 방 안에서는 순차 — 그 방이 비어 있어야 시작한다
+        if (running.containsKey(roomOf(task))) return
         startTask(task)
     }
 
-    fun cancelRunning() {
-        val task = runningTask() ?: return
-        running?.cancel()
-        running = null
-        runningId = null
+    /** 그 작업을 취소한다 — 같은 방의 다른 항목만 영향받고 다른 방은 그대로 돈다 */
+    fun cancel(id: String) {
+        val task = find(id)?.takeIf { it.status == TaskStatus.RUNNING } ?: return
+        detach(task)
         finish(task, TaskStatus.CANCELED, exitCode = null, errorMessage = "Canceled by user")
+    }
+
+    /** 도는 것 전부 취소 */
+    fun cancelRunning() = runningTasks().forEach { cancel(it.id) }
+
+    /** 그 작업의 구독을 뗀다 — 방을 비워 다음 항목이 들어올 수 있게 */
+    private fun detach(task: TaskEntry) {
+        val room = running.entries.firstOrNull { it.value.taskId == task.id }?.key ?: return
+        running.remove(room)?.handle?.cancel()
     }
 
     /**
@@ -318,12 +353,17 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
 
     // --- 실행 ---
 
+    /** 비어 있는 방마다 그 방의 첫 대기 항목을 시작한다 — 방 사이는 병렬이다 */
     private fun maybeStartNext() {
         if (!autoAdvance) return
-        if (runningId != null) return
-        val next = queued().firstOrNull() ?: return
-        inheritBatchTab(next)
-        startTask(next)
+        // 시작하면서 목록이 바뀌므로 스냅샷을 뜨고 돈다
+        val rooms = queued().map(::roomOf).distinct()
+        for (room in rooms) {
+            if (running.containsKey(room)) continue
+            val next = queued().firstOrNull { roomOf(it) == room } ?: continue
+            inheritBatchTab(next)
+            startTask(next)
+        }
     }
 
     /**
@@ -344,16 +384,19 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         task.status = TaskStatus.RUNNING
         task.startedAt = clock()
         task.attempts += 1
-        runningId = task.id
-        synchronized(logBuffer) { logBuffer.clear() }
+        val room = roomOf(task)
         notifyChanged()
 
-        running = launcherFor(task).launch(
+        // 방이 여럿이면 로그가 뒤섞인다 — 어느 방 줄인지 붙인다
+        val prefix = if (room == NEW_ROOM) "" else "[$room] "
+        val handle = launcherFor(task).launch(
             task = task,
-            onLine = { line -> appendLog(line) },
+            onLine = { line -> appendLog(prefix + line) },
             onState = { state -> onRunningState(task, state) },
             onDone = { result -> onTaskDone(task, result) },
         )
+        // 런처가 즉시 끝내면(실패) onDone 이 먼저 와 방을 비운다 — 그 뒤에 덮어쓰지 않는다
+        if (find(task.id)?.status == TaskStatus.RUNNING) running[room] = Run(task.id, handle)
     }
 
     /**
@@ -372,9 +415,7 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
 
     /** 인터럽트로 멈춘 실행을 중단하고 항목을 TODO 로 되돌린다 */
     private fun abortRun(task: TaskEntry) {
-        running?.cancel()
-        running = null
-        runningId = null
+        detach(task)
         task.status = TaskStatus.TODO
         task.finishedAt = clock()
         task.errorMessage = "Interrupted by user"
@@ -387,8 +428,8 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
      * exit 0 이라도 result 이벤트가 error 면 실패로 본다.
      */
     private fun onTaskDone(task: TaskEntry, result: TaskResult) {
-        running = null
-        runningId = null
+        // 이 방을 비운다 — 핸들은 이미 끝났으므로 cancel 하지 않는다
+        running.entries.removeAll { it.value.taskId == task.id }
         task.costUsd = result.costUsd
         task.finalState = result.finalState
         result.summary?.trim()?.takeIf { it.isNotEmpty() }?.let { task.summary = it }
@@ -402,8 +443,8 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
         )
         notifier.taskFinished(task)
         maybeStartNext()
-        // 다음 작업이 시작되지 않았으면 큐가 다 비었다는 뜻 — 자리를 비운 사람에게 알린다
-        if (runningId == null) notifyQueueDrained(task.cwd)
+        // 모든 방이 비었을 때가 큐가 다 끝난 시점 — 자리를 비운 사람에게 요약을 보낸다
+        if (running.isEmpty()) notifyQueueDrained(task.cwd)
     }
 
     /** 이번 회차에 처리된 결과만 요약한다 — 이전에 이미 알린 건은 제외 */
@@ -445,11 +486,13 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
             it.status = TaskStatus.TODO
             it.startedAt = null
         }
-        runningId = null
-        running = null
+        running.clear()
     }
 
     companion object {
+        /** 탭도 묶음도 없는 작업이 모이는 공용 방 — 저마다 방을 만들면 세션이 폭주한다 */
+        const val NEW_ROOM = "new"
+
         private const val MAX_HISTORY = 20
 
         private const val MAX_LOG_LINES = 500

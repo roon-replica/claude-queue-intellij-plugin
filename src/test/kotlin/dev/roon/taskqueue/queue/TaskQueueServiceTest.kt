@@ -28,6 +28,8 @@ class TaskQueueServiceTest {
             launched += task
             pending = onDone
             pendingState = onState
+            // 방별 병렬 검증용 — 작업별로도 따로 들고 있는다
+            byTask[task.id] = onDone
             return object : RunningTask {
                 override fun cancel() {
                     canceled++
@@ -35,12 +37,22 @@ class TaskQueueServiceTest {
             }
         }
 
+        /** 작업 id → 완료 콜백. 여러 방이 동시에 돌 때 특정 작업만 끝낸다 */
+        private val byTask = mutableMapOf<String, (TaskResult) -> Unit>()
+
         fun emitState(state: SessionState) = pendingState?.invoke(state)
 
         fun complete(exitCode: Int = 0, state: SessionState = SessionState.DONE, error: String? = null) {
             val done = pending ?: error("실행 중인 작업 없음")
             pending = null
             done(TaskResult(exitCode, state, 0.01, error))
+        }
+
+        /** 그 작업만 완료시킨다 */
+        fun complete(task: TaskEntry, exitCode: Int = 0, state: SessionState = SessionState.DONE) {
+            val done = byTask.remove(task.id) ?: error("실행 중이 아님: ${task.prompt}")
+            if (pending === done) pending = null
+            done(TaskResult(exitCode, state, 0.01, null))
         }
     }
 
@@ -240,6 +252,84 @@ class TaskQueueServiceTest {
 
         assertEquals(TaskStatus.QUEUED, second.status)
         assertEquals(1, fake.launched.size)
+    }
+
+    // --- 방(터미널 탭)별 병렬 ---
+
+    @Test
+    fun `탭이 다르면 동시에 돈다`() {
+        val a = queue.addTodo("작업A", "/tmp", terminalTab = "claude")
+        val b = queue.addTodo("작업B", "/tmp", terminalTab = "api")
+        queue.promote(a.id)
+        queue.promote(b.id)
+
+        assertEquals(TaskStatus.RUNNING, a.status)
+        assertEquals(TaskStatus.RUNNING, b.status)
+        assertEquals(2, queue.runningTasks().size)
+    }
+
+    @Test
+    fun `같은 탭이면 앞 작업이 끝나야 다음이 돈다`() {
+        val a = queue.addTodo("작업A", "/tmp", terminalTab = "claude")
+        val b = queue.addTodo("작업B", "/tmp", terminalTab = "claude")
+        queue.promote(a.id)
+        queue.promote(b.id)
+
+        assertEquals(TaskStatus.RUNNING, a.status)
+        assertEquals(TaskStatus.QUEUED, b.status)
+
+        fake.complete(a)
+        assertEquals(TaskStatus.RUNNING, b.status)
+    }
+
+    @Test
+    fun `한 방을 취소해도 다른 방은 계속 돈다`() {
+        val a = queue.addTodo("작업A", "/tmp", terminalTab = "claude")
+        val b = queue.addTodo("작업B", "/tmp", terminalTab = "api")
+        queue.promote(a.id)
+        queue.promote(b.id)
+
+        queue.cancel(a.id)
+
+        assertEquals(TaskStatus.CANCELED, a.status)
+        assertEquals(TaskStatus.RUNNING, b.status)
+        assertEquals(listOf(b.id), queue.runningTasks().map { it.id })
+    }
+
+    @Test
+    fun `탭 없는 작업들은 한 방에 모인다 — 세션 폭주 방지`() {
+        val a = queue.addTodo("작업A", "/tmp")
+        val b = queue.addTodo("작업B", "/tmp")
+        queue.promote(a.id)
+        queue.promote(b.id)
+
+        assertEquals(TaskStatus.RUNNING, a.status)
+        assertEquals(TaskStatus.QUEUED, b.status)
+        assertEquals(TaskQueueService.NEW_ROOM, queue.roomOf(b))
+    }
+
+    @Test
+    fun `취소로 빈 방은 다음 항목이 채운다`() {
+        val a = queue.addTodo("작업A", "/tmp", terminalTab = "claude")
+        val b = queue.addTodo("작업B", "/tmp", terminalTab = "claude")
+        queue.promote(a.id)
+        queue.promote(b.id)
+
+        queue.cancel(a.id)
+        queue.runNow(b.id)
+
+        assertEquals(TaskStatus.RUNNING, b.status)
+    }
+
+    @Test
+    fun `활성 방 목록은 대기·실행 항목이 있는 방만`() {
+        val a = queue.addTodo("작업A", "/tmp", terminalTab = "claude")
+        val b = queue.addTodo("작업B", "/tmp", terminalTab = "api")
+        queue.promote(a.id)
+        queue.promote(b.id)
+        fake.complete(a)
+
+        assertEquals(listOf("api"), queue.activeRooms())
     }
 
     @Test
