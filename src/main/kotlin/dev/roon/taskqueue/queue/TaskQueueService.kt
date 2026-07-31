@@ -41,6 +41,7 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
     private var state = TaskQueueState()
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
     private val logListeners = CopyOnWriteArrayList<(String) -> Unit>()
+    private val draftListeners = CopyOnWriteArrayList<(String) -> Unit>()
 
     /** 실행 중 작업의 최근 출력 — 메모리 누적을 막기 위해 상한을 둔다 */
     private val logBuffer = ArrayDeque<String>()
@@ -122,6 +123,26 @@ class TaskQueueService : PersistentStateComponent<TaskQueueState> {
 
     fun removeListener(listener: () -> Unit) {
         listeners -= listener
+    }
+
+    /**
+     * 입력창에 채워 넣을 초안을 전한다 (에디터 선택 → 작업 추가).
+     *
+     * 액션이 패널을 직접 찾지 않게 서비스를 거친다. **저장하지 않는 일회성 전달**이다 —
+     * 툴윈도가 닫혀 있으면 activate 하면서 패널이 생겨 구독하므로 그 뒤에 부르면 된다.
+     */
+    fun proposeDraft(text: String) {
+        val draft = text.trim()
+        if (draft.isEmpty()) return
+        draftListeners.forEach { runCatching { it(draft) } }
+    }
+
+    fun addDraftListener(listener: (String) -> Unit) {
+        draftListeners += listener
+    }
+
+    fun removeDraftListener(listener: (String) -> Unit) {
+        draftListeners -= listener
     }
 
     fun addLogListener(listener: (String) -> Unit) {

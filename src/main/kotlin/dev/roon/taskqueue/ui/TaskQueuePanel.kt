@@ -138,6 +138,19 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private val queueListener: () -> Unit = { ui { refresh() } }
     private val logListener: (String) -> Unit = { line -> ui { appendLog(line) } }
 
+    /**
+     * 에디터에서 넘어온 초안을 입력창에 꽂는다.
+     * **이미 친 글자를 덮지 않는다** — 빈 줄 하나 두고 이어붙이고 커서를 끝에 둔다.
+     */
+    private val draftListener: (String) -> Unit = { draft ->
+        ui {
+            val current = promptField.text
+            promptField.text = if (current.isBlank()) draft else current.trimEnd() + "\n\n" + draft
+            promptField.caretPosition = promptField.document.length
+            promptField.requestFocusInWindow()
+        }
+    }
+
     init {
         add(buildToolbar(), BorderLayout.NORTH)
         add(buildBody(), BorderLayout.CENTER)
@@ -147,6 +160,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         wireColumns()
         queue.addListener(queueListener)
         queue.addLogListener(logListener)
+        queue.addDraftListener(draftListener)
 
         refreshCliStatus()
         queue.recentLog().lastOrNull()?.let { appendLog(it) }
@@ -697,6 +711,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     override fun dispose() {
         queue.removeListener(queueListener)
         queue.removeLogListener(logListener)
+        queue.removeDraftListener(draftListener)
         highlighter.stop()
         ticker.stop()
         tabWatcher.stop()

@@ -359,6 +359,26 @@ class TaskQueueServiceTest {
     }
 
     @Test
+    fun `초안은 구독자에게 전달된다 — 저장하지 않는다`() {
+        val got = mutableListOf<String>()
+        queue.addDraftListener { got += it }
+
+        queue.proposeDraft("  Target: src/Foo.kt:1  ")
+
+        assertEquals(listOf("Target: src/Foo.kt:1"), got)
+        // 초안은 작업이 아니다 — 큐에 들어가면 안 된다
+        assertEquals(0, queue.tasks.size)
+    }
+
+    @Test
+    fun `빈 초안은 전달하지 않는다`() {
+        val got = mutableListOf<String>()
+        queue.addDraftListener { got += it }
+        queue.proposeDraft("   ")
+        assertTrue(got.isEmpty())
+    }
+
+    @Test
     fun `질문 대기(WAITING) 는 완료로 보지 않는다`() {
         val task = enqueueAndRun("작업", "/tmp")
         fake.emitState(SessionState.WAITING)
