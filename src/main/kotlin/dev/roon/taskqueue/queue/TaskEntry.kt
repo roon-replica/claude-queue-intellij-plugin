@@ -100,4 +100,16 @@ class TaskEntry() {
     }
 
     fun shortLabel(): String = prompt.replace(Regex("\\s+"), " ").trim().take(60)
+
+    /**
+     * 한 줄로 펴서 [max] 자까지. **잘리면 말줄임을 붙인다** — 잘렸는지 눈에 보여야
+     * 전문을 볼 생각을 한다(카드는 툴팁에 전문을 들고 있다).
+     *
+     * [shortLabel] 과 따로 두는 이유: 그것은 알림 제목·터미널 탭 이름에도 쓰여
+     * 길이를 늘리면 그쪽이 지저분해진다.
+     */
+    fun excerpt(max: Int): String {
+        val flat = prompt.replace(Regex("\\s+"), " ").trim()
+        return if (flat.length <= max) flat else flat.take(max).trimEnd() + "…"
+    }
 }

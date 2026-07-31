@@ -60,6 +60,9 @@ class ClassicTerminalHandle(val widget: JBTerminalWidget) : TerminalHandle {
     override fun hasRunningCommand(): Boolean? =
         runCatching { shell?.hasRunningCommands() }.getOrNull()
 
+    override fun userTitle(): String? =
+        runCatching { widget.terminalTitle.userDefinedTitle?.takeIf { it.isNotBlank() } }.getOrNull()
+
     override fun requestFocus() {
         runCatching { widget.asNewWidget().requestFocus() }
     }

@@ -7,6 +7,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import dev.roon.taskqueue.queue.TaskEntry
+import dev.roon.taskqueue.queue.TaskStatus
 import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.event.ComponentAdapter
@@ -31,6 +32,7 @@ class QueueColumn(
     highlight: (TaskEntry) -> Float = { 0f },
     accent: JBColor = StatusColors.TODO,
     retryable: (TaskEntry) -> Boolean = { false },
+    pulse: () -> Float = { 0f },
 ) : JPanel(BorderLayout()) {
 
     val model = DefaultListModel<TaskEntry>()
@@ -40,7 +42,7 @@ class QueueColumn(
 
     val list = JBList(model).apply {
         selectionMode = ListSelectionModel.SINGLE_SELECTION
-        cellRenderer = TaskCardRenderer(highlight, { it == hoverIndex }, retryable)
+        cellRenderer = TaskCardRenderer(highlight, { it == hoverIndex }, retryable, pulse)
         emptyText.text = emptyHint
     }
 
@@ -58,7 +60,17 @@ class QueueColumn(
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
     }
 
-    private val baseTitle = title
+    private var baseTitle = title
+
+    /** 지금 걸린 제목 (개수 표시는 뺀 것) */
+    fun title(): String = baseTitle
+
+    /** 탭 이름이 바뀌면 컬럼 제목도 따라간다 — 키(정체성)는 그대로 두고 표시만 바꾼다 */
+    fun setTitle(text: String) {
+        if (text == baseTitle) return
+        baseTitle = text
+        header.text = if (model.isEmpty) baseTitle else "$baseTitle  ${model.size()}"
+    }
 
     init {
         val headerRow = JPanel(BorderLayout()).apply {
@@ -146,6 +158,18 @@ class QueueColumn(
         if (selectedId != null) {
             val idx = tasks.indexOfFirst { it.id == selectedId }
             if (idx >= 0) list.selectedIndex = idx else list.clearSelection()
+        }
+    }
+
+    /**
+     * 실행 중 카드의 셀만 다시 그린다 — 맥동 때문에 리스트 전체를 repaint 하면
+     * 낭비가 크다. 방마다 최대 한 장이라 사실상 작은 사각형 하나다.
+     */
+    fun repaintRunning() {
+        (0 until model.size()).forEach { row ->
+            if (model.getElementAt(row).status == TaskStatus.RUNNING) {
+                list.getCellBounds(row, row)?.let { list.repaint(it) }
+            }
         }
     }
 

@@ -117,13 +117,40 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
      */
     private val ticker = Timer(1_000) { roomColumns.values.forEach { it.list.repaint() } }
 
+    /** 실행 중 테두리 맥동 위상 (0..1). 사인으로 부드럽게 오간다 */
+    private var pulsePhase = 0f
+
+    private val pulseStrength: () -> Float = { pulsePhase }
+
+    /**
+     * 맥동 애니메이션. **실행 중 카드의 셀만** 다시 그린다 — 리스트 전체 repaint 는
+     * 초당 여러 번 하면 낭비가 크다. 도는 작업이 없으면 타이머를 멈춘다.
+     */
+    private val pulser = Timer(PULSE_MS) {
+        val step = PULSE_MS.toFloat() / PULSE_PERIOD_MS
+        // 0..1 을 왕복하는 사인 — 시작·끝이 완만해 눈에 편하다
+        pulseTime = (pulseTime + step) % 1f
+        pulsePhase = ((Math.sin(pulseTime * 2 * Math.PI) + 1) / 2).toFloat()
+        roomColumns.values.forEach { it.repaintRunning() }
+    }
+
+    private var pulseTime = 0f
+
     /**
      * 터미널 탭이 열리고 닫히는 것은 큐 이벤트가 아니라서 [refresh] 가 불리지 않는다.
      * 주기적으로 훑어 컬럼 구성이 달라졌을 때만 다시 그린다 — 매번 갈아엎으면 선택이 튄다.
      */
     private val tabWatcher = Timer(TAB_POLL_MS) {
-        if (columnKeys() != roomColumns.keys.toList()) refresh()
+        // 이름만 바뀌는 경우는 키가 그대로라 키 비교로는 안 잡힌다 — 표시 이름도 함께 본다
+        if (columnSignature() != shownSignature()) refresh()
     }
+
+    /** 지금 있어야 할 컬럼 구성 (키 + 보일 이름) */
+    private fun columnSignature(): List<Pair<String, String>> = columnKeys().map { it to titleOf(it) }
+
+    /** 지금 화면에 세워진 컬럼 구성 */
+    private fun shownSignature(): List<Pair<String, String>> =
+        roomColumns.map { (key, column) -> key to column.title() }
 
     private val statusLabel = JBLabel().apply {
         font = JBFont.small()
@@ -217,6 +244,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         // 빈 입력창에서만 ↑ 를 가로챈다 — 내용이 있으면 커서 이동이어야 한다
         input.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "taskqueue-history")
         input.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), "insert-break")
+
         promptField.actionMap.put("taskqueue-add", object : AbstractAction() {
             override fun actionPerformed(e: java.awt.event.ActionEvent?) = addTodo()
         })
@@ -364,7 +392,8 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
     private fun registerShortcuts(column: QueueColumn) {
         val list = column.list
 
-        shortcut("DELETE", "BACK_SPACE", on = list) {
+        // 맥에서 삭제는 ⌘⌫ 가 자연스럽다 — 없으면 그 조합이 무시돼 "두 번 눌러야 지워진다" 가 된다
+        shortcut("DELETE", "BACK_SPACE", "meta BACK_SPACE", "meta DELETE", on = list) {
             column.selected?.let { queue.remove(it.id) }
         }
         shortcut("meta ENTER", on = list) {
@@ -432,21 +461,51 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
             // 실행 중 카드는 방을 옮기지 않는다 — 이미 그 탭의 claude 가 물고 있다
             task.status == TaskStatus.RUNNING -> Unit
             key == null -> Unit // 완료 컬럼 등
-            task.status == TaskStatus.TODO -> queue.promote(task.id, tabOf(key))
-            // 대기 항목을 다른 방으로 — 그 탭에서 돌게 된다
-            task.status == TaskStatus.QUEUED -> queue.moveToRoom(task.id, tabOf(key))
-            else -> Unit
+            else -> {
+                val tab = tabOf(key)
+                when {
+                    tab == null -> appendLog("· that terminal can't be used — pick another one")
+                    task.status == TaskStatus.TODO -> queue.promote(task.id, tab)
+                    // 대기 항목을 다른 방으로 — 그 탭에서 돌게 된다
+                    task.status == TaskStatus.QUEUED -> queue.moveToRoom(task.id, tab)
+                }
+            }
         }
     }
 
-    /** 컬럼 키 → 실행할 탭 이름. '새 대화' 컬럼은 탭이 정해지지 않은 상태다 */
-    private fun tabOf(key: String): String = if (key == NEW_COLUMN) "" else key
+    /**
+     * 컬럼 키 → **실행에 쓸 수 있는** 탭 이름.
+     *
+     * 컬럼 키는 등록된 탭이면 우리 라벨이지만, 아직 안 쓴 탭이면 그냥 현재 제목이다.
+     * 후자를 그대로 실행에 넘기면 런처가 레지스트리에서 못 찾아 "That terminal tab is gone"
+     * 으로 실패한다 — 팔레트가 하는 것처럼 **여기서 등록**한 뒤 그 라벨을 쓴다.
+     *
+     * @return 탭 이름, '새 대화' 면 빈 문자열, 다룰 수 없는 탭이면 null
+     */
+    private fun tabOf(key: String): String? {
+        if (key == NEW_COLUMN || key == PLACEHOLDER) return ""
+        if (TerminalSessionRegistry.getInstance().find(key) != null) return key
+        val content = TerminalTabs.contents(project).firstOrNull {
+            it.displayName?.takeIf { name -> name.isNotBlank() } == key
+        } ?: return null
+        return TerminalTabs.pinContent(project, content)
+    }
 
+    /**
+     * 컬럼에 보일 이름. **키(정체성)와 표시 이름을 나눈다** —
+     * 키는 작업이 물고 있는 탭 라벨이라 바뀌면 안 되고, 표시 이름은 사용자가 탭을
+     * 바꾸면 따라가야 한다. 사용자가 안 바꿨으면 키를 그대로 쓴다.
+     */
     private fun titleOf(key: String): String = when (key) {
         PLACEHOLDER -> "IN PROGRESS"
         NEW_COLUMN -> "NEW CONVERSATION"
-        else -> key.uppercase()
+        else -> (userTitleOf(key) ?: key).uppercase()
     }
+
+    /** 그 탭에 사용자가 붙인 이름 (앱이 바꾼 제목은 제외) */
+    private fun userTitleOf(key: String): String? = runCatching {
+        TerminalSessionRegistry.getInstance().find(key)?.handle?.userTitle()
+    }.getOrNull()
 
     /**
      * 카드가 들어갈 컬럼. **탭 이름 하나로만 가른다** — 서비스의 방은 묶음까지 구분하지만
@@ -501,6 +560,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         wanted.forEach { room ->
             roomColumns[room] = kept[room] ?: QueueColumn(
                 titleOf(room), "Runs in order once promoted", strength, accentOf(room), retryable,
+                pulseStrength,
             ).also { wire(it) }
         }
 
@@ -618,9 +678,16 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         syncRoomColumns(columnKeys())
         todoColumn.setTasks(all.filter { it.status == TaskStatus.TODO })
         roomColumns.forEach { (key, column) ->
+            // 탭 이름이 바뀌었을 수 있다 — 목록보다 먼저 제목을 맞춘다
+            column.setTitle(titleOf(key))
             column.setTasks(all.filter { it.status.isActive && columnKeyOf(it) == key })
         }
-        doneColumn.setTasks(all.filter { it.status.isFinished })
+        // 끝난 것은 최근이 위 — 방금 뭐가 끝났는지 보려고 보는 컬럼이다.
+        // (드래그 대상이 아니라서 순서를 바꿔도 전역 순서에 영향이 없다)
+        doneColumn.setTasks(
+            all.filter { it.status.isFinished }
+                .sortedByDescending { it.finishedAt ?: it.createdAt }
+        )
         doneColumn.setHeaderActionEnabled(all.any { it.status.isFinished })
 
         // 상태가 바뀐 카드에 잔상을 걸고, 새 컬럼에서 보이게 스크롤한다
@@ -630,8 +697,10 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         // 실행 중일 때만 초 단위 갱신
         if (queue.runningTask() != null) {
             if (!ticker.isRunning) ticker.start()
-        } else if (ticker.isRunning) {
-            ticker.stop()
+            if (!pulser.isRunning) pulser.start()
+        } else {
+            if (ticker.isRunning) ticker.stop()
+            if (pulser.isRunning) pulser.stop()
         }
 
         statusLabel.text = buildString {
@@ -666,6 +735,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
         /** 터미널 탭 열림·닫힘 감시 주기 */
         const val TAB_POLL_MS = 2_000
+
+        /** 맥동 갱신 간격. 8fps 면 부드럽게 보이고 비용은 거의 없다 */
+        const val PULSE_MS = 120
+
+        /** 한 번 숨쉬는 데 걸리는 시간 */
+        const val PULSE_PERIOD_MS = 2_000f
 
         const val NEW_TERMINAL = "New terminal"
 
@@ -714,6 +789,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         queue.removeDraftListener(draftListener)
         highlighter.stop()
         ticker.stop()
+        pulser.stop()
         tabWatcher.stop()
     }
 }

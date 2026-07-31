@@ -53,6 +53,24 @@ object TerminalTabs {
     }
 
     /**
+     * 아직 등록되지 않은 탭을 등록하고 라벨을 준다 (팔레트를 거치지 않고 드래그로 고른 경우).
+     *
+     * **등록되지 않은 탭 이름은 실행에 쓸 수 없다** — 런처는 레지스트리에서 찾으므로
+     * 없으면 "That terminal tab is gone" 으로 실패한다.
+     *
+     * @return 라벨, 또는 다룰 수 없는 탭이면 null
+     */
+    fun pinContent(project: Project, content: Content): String? {
+        val registry = TerminalSessionRegistry.getInstance()
+        registry.findByContent(content)?.let { return it.label }
+        val handle = TerminalEngines.handleFor(project, content) ?: return null
+        val title = content.displayName?.takeIf { it.isNotBlank() } ?: "Terminal"
+        val label = registry.uniqueLabel(title)
+        registry.register(label, handle, sessionId = null, ours = false)
+        return label
+    }
+
+    /**
      * 탭이 열려 있는데 하나도 쓸 수 없는 상태인지.
      *
      * 지원하지 않는 엔진의 탭은 [TerminalEngines] 가 핸들을 만들지 못해 [list] 가 빈 목록을

@@ -12,9 +12,15 @@ object StatusColors {
 
     val TODO: JBColor = JBColor(0x6E7781, 0x8B949E)
 
-    /** 신호등 읽기 — 주황은 '대기', 초록은 '진행'. 파랑은 대기라는 뜻이 읽히지 않는다 */
+    /** 주황은 '대기' — 파랑은 대기라는 뜻이 읽히지 않아 쓰지 않는다 */
     val QUEUED: JBColor = JBColor(0xC17E00, 0xE3A93A)
-    val RUNNING: JBColor = JBColor(0x1F8B4C, 0x4CB782)
+
+    /**
+     * '진행' 은 파랑. 초록은 '완료·성공' 으로 읽히기 쉬워 도는 중인 것과 헷갈렸다 —
+     * 파랑은 활동 중을 뜻하는 관례가 있고, 실패 빨강·대기 주황과도 확실히 갈린다.
+     * 구간 헤더·맥동 테두리·카드 상태점이 모두 이 값을 쓴다.
+     */
+    val RUNNING: JBColor = JBColor(0x1F6FEB, 0x58A6FF)
     val DONE: JBColor = JBColor(0x6E7781, 0x8B949E)
     val FAILED: JBColor = JBColor(0xD1383D, 0xE5534B)
 

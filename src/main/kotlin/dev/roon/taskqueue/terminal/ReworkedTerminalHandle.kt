@@ -67,6 +67,9 @@ class ReworkedTerminalHandle(private val tab: TerminalToolWindowTab) : TerminalH
         integration.outputStatus.value is TerminalOutputStatus.ExecutingCommand
     }.getOrNull()
 
+    override fun userTitle(): String? =
+        runCatching { view.title.userDefinedTitle?.takeIf { it.isNotBlank() } }.getOrNull()
+
     override fun requestFocus() {
         runCatching { view.preferredFocusableComponent.requestFocusInWindow() }
     }

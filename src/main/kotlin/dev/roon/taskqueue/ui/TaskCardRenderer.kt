@@ -36,6 +36,8 @@ class TaskCardRenderer(
     private val highlight: (TaskEntry) -> Float = { 0f },
     private val hovered: (Int) -> Boolean = { false },
     private val retryable: (TaskEntry) -> Boolean = { false },
+    /** 실행 중 카드 테두리의 맥동 세기 (0..1). 패널이 주기적으로 올려준다 */
+    private val pulse: () -> Float = { 0f },
 ) : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRenderer<TaskEntry> {
 
     private val dot = StatusDot()
@@ -102,8 +104,8 @@ class TaskCardRenderer(
         // 마우스가 올라간 행을 살짝 띄운다 — 어떤 카드를 조작하는지 분명해진다
         val base = if (isSelected || !isHover) plain else blend(plain, list.foreground, HOVER_MIX)
         val fg = if (isSelected) list.selectionForeground else list.foreground
-        // 방금 옮겨온 카드는 그 상태 색으로 잠깐 물든다
-        background = blend(base, StatusColors.of(task.status), highlight(task) * HIGHLIGHT_MAX)
+        // 방금 옮겨온 카드는 테두리로만 표시한다 — 배경까지 물들이면 글자 대비가 흔들린다
+        background = base
         isOpaque = true
 
         dot.color = StatusColors.of(task.status)
@@ -117,7 +119,7 @@ class TaskCardRenderer(
         retry.isVisible = showActions && retryable(task)
         close.isVisible = showActions
 
-        val label = task.shortLabel().ifEmpty { "(empty prompt)" }
+        val label = task.excerpt(CARD_LABEL_MAX).ifEmpty { "(empty prompt)" }
         // 실행 순서가 의미 있는 항목에만 번호 — 돌고 있거나 끝난 건 순서가 무의미하다
         val heading = if (task.status.isOrdered) "${index + 1}. $label" else label
         // 컬럼 폭에 맞춰 여러 줄로 접는다. 한 줄로 두면 카드가 옆으로 늘어나 오른쪽
@@ -143,15 +145,39 @@ class TaskCardRenderer(
             else -> JBColor.GRAY
         }
 
-        border = if (task.status == TaskStatus.RUNNING) {
+        border = borderFor(task, base)
+        return this
+    }
+
+    /**
+     * 카드 테두리.
+     *
+     * 방금 상태가 바뀐 카드는 **바깥 1px 테두리**로 알린다. 색을 배경 쪽으로 섞어
+     * 잔상이 사라지게 한다 — 알파를 쓰지 않고 섞는 이유는 리스트 배경과 자연스럽게
+     * 맞물려야 하기 때문이다(StatusColors.blend 와 같은 이유).
+     *
+     * 안쪽은 원래 여백이고, 실행 중이면 왼쪽 굵은 선이 그대로 남는다 —
+     * 테두리를 겹쳐 쓰므로 두 표시가 서로를 지우지 않는다. 바깥 선이 1px 늘어난 만큼
+     * 안쪽 여백을 1px 줄여 카드 크기가 흔들리지 않게 한다.
+     */
+    private fun borderFor(task: TaskEntry, base: Color): javax.swing.border.Border {
+        val glow = highlight(task)
+        val running = task.status == TaskStatus.RUNNING
+
+        // 실행 중이면 전체를 감싸는 테두리가 숨을 쉰다 — 어느 카드가 지금 도는지 멀리서도 보인다.
+        // 굵기는 고정이고 색만 바뀐다: 굵기가 흔들리면 목록이 들썩인다
+        val inner = if (running) {
+            val breath = PULSE_MIN + (1f - PULSE_MIN) * pulse()
             BorderFactory.createCompoundBorder(
-                JBUI.Borders.customLine(StatusColors.RUNNING, 0, 2, 0, 0),
-                JBUI.Borders.empty(CARD_PAD_V, 4),
+                JBUI.Borders.customLine(blend(base, StatusColors.RUNNING, breath), 1),
+                JBUI.Borders.empty(CARD_PAD_V - 1, if (glow > 0f) 4 else 5),
             )
         } else {
-            JBUI.Borders.empty(CARD_PAD_V, 6)
+            JBUI.Borders.empty(CARD_PAD_V - if (glow > 0f) 1 else 0, if (glow > 0f) 5 else 6)
         }
-        return this
+        if (glow <= 0f) return inner
+        val edge = blend(base, StatusColors.of(task.status), glow)
+        return BorderFactory.createCompoundBorder(JBUI.Borders.customLine(edge, 1), inner)
     }
 
     /** 카드는 컬럼보다 넓어질 수 없다 — 넘치면 가로 스크롤이 생겨 버튼이 화면 밖으로 나간다 */
@@ -269,6 +295,15 @@ class TaskCardRenderer(
 
     companion object {
 
+        /**
+         * 카드에 보일 프롬프트 길이. 컬럼이 좁아도 줄바꿈으로 접히니
+         * 60자(`shortLabel`)는 너무 짧아 무슨 작업인지 안 읽혔다. 전문은 툴팁에 있다.
+         */
+        private const val CARD_LABEL_MAX = 160
+
+        /** 맥동의 가장 옅은 지점 — 0 이면 테두리가 사라져 카드가 깜빡이는 것처럼 보인다 */
+        private const val PULSE_MIN = 0.35f
+
         /** 카드 세로 여백 — 너무 좁으면 목록이 답답하다 */
         private const val CARD_PAD_V = 7
 
@@ -276,8 +311,6 @@ class TaskCardRenderer(
         const val ACTION_WIDTH = 28
 
         /** 잔상이 가장 진할 때의 혼합 비율 — 글자가 묻히지 않을 만큼만 */
-        private const val HIGHLIGHT_MAX = 0.45f
-
         /** 마우스 올린 행의 강조 — 아주 옅게 */
         private const val HOVER_MIX = 0.07f
 

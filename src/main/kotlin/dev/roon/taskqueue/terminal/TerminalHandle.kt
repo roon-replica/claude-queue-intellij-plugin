@@ -44,6 +44,15 @@ interface TerminalHandle {
 
     fun requestFocus()
 
+    /**
+     * 사용자가 직접 바꾼 탭 이름. 안 바꿨으면 null.
+     *
+     * **앱이 바꾼 제목과 구분해서 읽는다** — claude 가 실행되면 탭 제목을 "✳ Claude Code" 로
+     * 덮어쓰는데, 그것까지 따라가면 모든 claude 탭이 같은 이름이 된다.
+     * 플랫폼이 둘을 따로 들고 있어(`TerminalTitle`) 사용자가 정한 것만 고른다.
+     */
+    fun userTitle(): String?
+
     /** 이 탭이 그 Content 인지 — 툴윈도에서 탭을 찾아 보여줄 때 쓴다 */
     fun matches(content: Content): Boolean
 }
