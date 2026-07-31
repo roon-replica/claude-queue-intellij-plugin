@@ -45,7 +45,8 @@ class QueueColumn(
     }
 
     private val header = JBLabel(title).apply {
-        font = JBFont.smallOrNewUiMedium().asBold()
+        // smallOrNewUiMedium() 은 @Internal 이라 쓰지 않는다 (검증기 지적)
+        font = JBFont.small().asBold()
         border = JBUI.Borders.empty(6, 6)
         foreground = accent
     }

@@ -36,6 +36,23 @@ intellijPlatform {
     // Java 폼/@NotNull 계측 미사용 — 끄면 빌드가 짧아진다
     instrumentCode = false
 
+    /**
+     * 신 터미널 API 가 있는 버전만 정적 검증한다.
+     *
+     * 그 API 는 253 부터 있고(검증기 확인), 그 아래(243/251/252)에서는 **패키지 자체가 없어**
+     * 검증기가 참조를 문제로 찍는다. [TerminalEngines] 의 `Class.forName` 가드가 그 경로를
+     * 타지 않게 막지만 정적 분석은 그것을 보지 못한다 — 경고를 끄면 진짜 문제까지 가려지므로
+     * 대상에서 뺀다. 하한은 `runIde243` 으로 직접 띄워 확인했다(로드·터미널 기능 정상).
+     *
+     * "있는데 모양이 다른" 구간은 없다 — 문제 보고가 전부 `Package is not found` 였다.
+     */
+    pluginVerification {
+        ides {
+            create("IU", "2025.3")
+            create("IU", "2026.1")
+        }
+    }
+
     pluginConfiguration {
         id = "dev.roon.taskqueue"
         name = "Task Queue"
@@ -54,4 +71,16 @@ intellijPlatform {
 
 kotlin {
     jvmToolchain(21)
+}
+
+/**
+ * 지원 하한(2024.3) 샌드박스.
+ *
+ * 신 터미널 API 는 2026.1 에만 있고 [TerminalEngines] 가 `Class.forName` 으로 가려 쓴다.
+ * 그 가드가 실제로 통하는지 — 구버전에서 NoClassDefFoundError 없이 Classic 경로로
+ * 도는지 — 는 여기서 띄워봐야 알 수 있다. 검증기는 정적 분석이라 가드를 보지 못한다.
+ */
+intellijPlatformTesting.runIde.register("runIde243") {
+    type = org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdeaCommunity
+    version = "2024.3"
 }

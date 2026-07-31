@@ -17,6 +17,16 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.5.0</h4>
+        <ul>
+          <li>Works with the new Reworked terminal — the default engine on 2026.1. Until now the
+              plugin could only see Classic terminal tabs, so on a default 2026.1 setup your open
+              tabs were ignored and a new one was opened every time. Picking an existing tab,
+              detecting whether claude is already running in it, and sending prompts all work on
+              both engines now.</li>
+          <li>New tabs on the Reworked engine start without being brought to the front, so the
+              queue no longer has to show the terminal to get a task going.</li>
+        </ul>
         <h4>0.4.5</h4>
         <ul>
           <li>If your open terminal tabs can't be used, the plugin now says so instead of quietly
