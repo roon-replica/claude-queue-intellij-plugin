@@ -18,6 +18,11 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.6.2</h4>
+        <ul>
+          <li>Fixed the declared minimum IDE version — 2025.3, which is where the reworked terminal
+              this plugin drives first appears.</li>
+        </ul>
         <h4>0.6.1</h4>
         <ul>
           <li>Requires 2025.3 or newer now. The reworked terminal — the default engine since
