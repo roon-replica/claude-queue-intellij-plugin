@@ -5,18 +5,30 @@
 
     <!-- 마켓플레이스에 그대로 노출되는 설명 — HTML 만 허용된다 -->
     <description><![CDATA[
-        Queue up Claude Code tasks and run them one after another in your IDE terminal.
+        Queue up Claude Code tasks and let them run in your IDE terminal while you work.
         <ul>
           <li><b>TODO / In progress / Done</b> board — drag cards to reorder or to start them.</li>
           <li>Tasks run in a <b>real Claude Code terminal</b>, so you can watch and step in at any time.</li>
           <li>Pick which terminal a task runs in — a new tab, one the plugin opened, or a shell you opened yourself.</li>
           <li>Completion is detected automatically and the next task starts on its own.</li>
+          <li>Tasks in different terminal tabs run <b>in parallel</b>; within one tab they run in order.</li>
         </ul>
         Requires the <code>claude</code> CLI on your PATH.
     ]]></description>
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.6.0</h4>
+        <ul>
+          <li>Tasks in different terminal tabs now run at the same time. Within a tab they still run
+              one after another, so a conversation keeps its order — but two tabs no longer wait for
+              each other.</li>
+          <li>IN PROGRESS is split into one column per terminal tab, each in its own colour, so you
+              can see what every conversation is working on at a glance. Drag a waiting card onto
+              another tab's column to move it there — it starts right away if that tab is free.</li>
+          <li>Columns follow your open terminals, so they stay put instead of appearing and
+              disappearing as tasks come and go.</li>
+        </ul>
         <h4>0.5.0</h4>
         <ul>
           <li>Works with the new Reworked terminal — the default engine on 2026.1. Until now the
