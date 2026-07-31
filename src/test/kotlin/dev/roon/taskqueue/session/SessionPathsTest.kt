@@ -8,8 +8,8 @@ class SessionPathsTest {
     @Test
     fun `cwd 인코딩은 영문숫자 외를 하이픈으로`() {
         assertEquals(
-            "-Users-mac-al03228536-IdeaProjects-claude-talk",
-            SessionPaths.encodeCwd("/Users/local-user/IdeaProjects/claude-talk"),
+            "-Users-someone-IdeaProjects-claude-talk",
+            SessionPaths.encodeCwd("/Users/someone/IdeaProjects/claude-talk"),
         )
     }
 

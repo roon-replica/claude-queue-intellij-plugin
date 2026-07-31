@@ -8,3 +8,7 @@ private/
 
 .intellijPlatform/
 runIde*.log
+
+# 개인·사내 설정은 공개하지 않는다
+.claude/
+.DS_Store
