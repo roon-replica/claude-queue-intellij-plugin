@@ -24,6 +24,13 @@ object StatusColors {
     val DONE: JBColor = JBColor(0x6E7781, 0x8B949E)
     val FAILED: JBColor = JBColor(0xD1383D, 0xE5534B)
 
+    /**
+     * 컨텍스트 점유 경고. 60%+ 는 '대기' 주황과 같은 값을 쓴다 — 둘 다 "곧 손이 필요함" 이고
+     * 색을 늘리면 방 색과 뒤섞여 읽히지 않는다. 80%+ 는 실패와 같은 빨강으로 확실히 가른다.
+     */
+    val CONTEXT_WARN: JBColor = QUEUED
+    val CONTEXT_HEAVY: JBColor = FAILED
+
     fun of(status: TaskStatus): JBColor = when (status) {
         TaskStatus.TODO -> TODO
         TaskStatus.QUEUED -> QUEUED

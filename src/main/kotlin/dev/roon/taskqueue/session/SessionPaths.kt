@@ -12,6 +12,18 @@ object SessionPaths {
     val projectsRoot: File
         get() = File(System.getProperty("user.home"), ".claude/projects")
 
+    /**
+     * 심볼릭 링크를 푼 실제 경로.
+     *
+     * **claude 는 전사 폴더명을 만들 때 cwd 를 실제 경로로 푼다** — `~/work` 가
+     * `/Volumes/SSD/projects` 링크면 `-Volumes-SSD-projects-…` 로 저장한다.
+     * IntelliJ 의 `basePath` 는 링크를 풀지 않으므로 그대로 인코딩하면 서로 다른
+     * 폴더를 가리키게 되고, 전사를 영영 못 찾는다 (실측 확인).
+     *
+     * 링크가 없으면 입력과 같은 값이라 붙여서 손해가 없다.
+     */
+    fun canonical(path: String): String = runCatching { File(path).canonicalPath }.getOrDefault(path)
+
     /** cwd 의 영문/숫자 외 문자를 '-' 로 바꾼 폴더명 */
     fun encodeCwd(cwd: String): String = cwd.replace(NON_ALNUM, "-")
 

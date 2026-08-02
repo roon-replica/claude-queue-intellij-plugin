@@ -108,28 +108,64 @@ object SessionScanner {
         return ""
     }
 
-    /** 최신 assistant 의 message.usage → 컨텍스트 점유 토큰. 못 찾으면 0 */
-    fun lastContextTokens(file: File): Long {
-        val lines = readTailLines(file, 0) ?: return 0
-        for (line in lines.asReversed()) {
-            val d = parseObject(line) ?: continue
-            if (d.str("type") != "assistant") continue
-            val usage = d.obj("message")?.obj("usage") ?: continue
-            return ContextUsage.usageTokens(usage)
+    /** 점유율 표시에 필요한 값 한 쌍 */
+    data class ContextSnapshot(val tokens: Long, val model: String) {
+        companion object {
+            val NONE = ContextSnapshot(0, "")
         }
-        return 0
     }
 
-    /** 최신 assistant 의 모델명. 못 찾으면 "" */
-    fun lastModel(file: File): String {
-        val lines = readTailLines(file, 0) ?: return ""
-        for (line in lines.asReversed()) {
-            val d = parseObject(line) ?: continue
+    /**
+     * 컨텍스트 점유 토큰 + 모델명을 **한 번의 읽기·파싱으로** 가져온다.
+     * 2초마다 폴링되는 경로라 파일을 두 번 훑지 않는다.
+     *
+     * **compact 이전 토큰 값은 버린다** — 압축이 일어나면 실제 점유는 확 줄지만 직전
+     * assistant 레코드에는 압축 전 usage 가 그대로 남아 있다. 그걸 읽으면 실제보다
+     * 훨씬 높은 값을 보여주므로, compact 경계보다 뒤에 있는 usage 만 유효로 본다.
+     * 압축 직후(새 응답 전)에는 0 = "모름" 이라 표시가 아예 나가지 않는다.
+     * 경계가 tail 창 밖으로 밀려났다면 창 안은 전부 압축 이후라 그대로 유효하다.
+     *
+     * 모델명은 압축과 무관하므로 경계를 넘어서도 계속 찾는다.
+     */
+    fun lastContext(file: File): ContextSnapshot {
+        val lines = readTailLines(file, 0) ?: return ContextSnapshot.NONE
+        val objs = lines.map { parseObject(it) }
+
+        val lastCompact = objs.indexOfLast { it != null && isCompactBoundary(it) }
+        var tokens = 0L
+        var tokensDone = false
+        var model = ""
+
+        for (i in objs.indices.reversed()) {
+            val d = objs[i] ?: continue
             if (d.str("type") != "assistant") continue
-            d.obj("message")?.str("model")?.let { return it }
+            val message = d.obj("message")
+
+            if (model.isEmpty()) message?.str("model")?.let { model = it }
+            if (!tokensDone) {
+                if (i < lastCompact) {
+                    tokensDone = true // 압축 이전 값 — 쓰지 않는다
+                } else {
+                    message?.obj("usage")?.let {
+                        tokens = ContextUsage.usageTokens(it)
+                        tokensDone = true
+                    }
+                }
+            }
+            if (tokensDone && model.isNotEmpty()) break
         }
-        return ""
+        return ContextSnapshot(tokens, model)
     }
+
+    /** compact 경계 레코드 — 시스템 경계 표식 또는 그 결과로 삽입된 요약 */
+    private fun isCompactBoundary(d: JsonObject): Boolean =
+        (d.str("type") == "system" && d.str("subtype") == "compact_boundary") || d.bool("isCompactSummary")
+
+    /** 최신 assistant 의 message.usage → 컨텍스트 점유 토큰. 못 찾으면 0 */
+    fun lastContextTokens(file: File): Long = lastContext(file).tokens
+
+    /** 최신 assistant 의 모델명. 못 찾으면 "" */
+    fun lastModel(file: File): String = lastContext(file).model
 
     // --- 내부 ---
 

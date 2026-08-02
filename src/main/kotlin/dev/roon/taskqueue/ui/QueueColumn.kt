@@ -65,6 +65,18 @@ class QueueColumn(
     /** 지금 걸린 제목 (개수 표시는 뺀 것) */
     fun title(): String = baseTitle
 
+    /** 헤더 색을 바꾼다 — 컨텍스트 점유가 높은 방을 눈에 걸리게 할 때 쓴다 */
+    fun setAccent(color: JBColor) {
+        if (header.foreground == color) return
+        header.foreground = color
+    }
+
+    /** 헤더에 마우스를 올렸을 때의 설명. null 이면 툴팁 없음 */
+    fun setHeaderTooltip(text: String?) {
+        if (header.toolTipText == text) return
+        header.toolTipText = text
+    }
+
     /** 탭 이름이 바뀌면 컬럼 제목도 따라간다 — 키(정체성)는 그대로 두고 표시만 바꾼다 */
     fun setTitle(text: String) {
         if (text == baseTitle) return

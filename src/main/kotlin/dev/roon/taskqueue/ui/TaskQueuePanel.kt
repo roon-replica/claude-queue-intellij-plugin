@@ -10,6 +10,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CustomShortcutSet
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
@@ -27,6 +28,9 @@ import dev.roon.taskqueue.queue.ExecMode
 import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
+import dev.roon.taskqueue.session.ContextUsage
+import dev.roon.taskqueue.session.SessionPaths
+import dev.roon.taskqueue.session.SessionScanner
 import dev.roon.taskqueue.terminal.TerminalSessionRegistry
 import dev.roon.taskqueue.terminal.TerminalTabs
 import dev.roon.taskqueue.terminal.TerminalTabFocuser
@@ -38,6 +42,7 @@ import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import javax.swing.AbstractAction
 import javax.swing.Icon
 import javax.swing.JComponent
@@ -118,6 +123,20 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
      */
     private val ticker = Timer(1_000) { roomColumns.values.forEach { it.list.repaint() } }
 
+    /**
+     * 탭별 컨텍스트 점유 툴팁 (`130.3k/1m (13%)  ·  claude-opus-5`).
+     * **배경에서 계산해 여기 담는다** — 전사 파일을 EDT 에서 읽으면 UI 가 그만큼 멈춘다.
+     *
+     * 생성자의 첫 `refresh()` 가 이미 읽으므로 선언이 그보다 위에 있어야 한다.
+     */
+    private val usageTip = ConcurrentHashMap<String, String>()
+
+    /** 마지막으로 읽은 전사 파일의 크기·수정시각 — 그대로면 다시 읽지 않는다 */
+    private val usageStamp = ConcurrentHashMap<String, String>()
+
+    /** 방별 점유 단계 — 헤더 색을 가른다 */
+    private val usageLevel = ConcurrentHashMap<String, ContextUsage.Level>()
+
     /** 실행 중 테두리 맥동 위상 (0..1). 사인으로 부드럽게 오간다 */
     private var pulsePhase = 0f
 
@@ -143,6 +162,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
      */
     private val tabWatcher = Timer(TAB_POLL_MS) {
         // 이름만 바뀌는 경우는 키가 그대로라 키 비교로는 안 잡힌다 — 표시 이름도 함께 본다
+        refreshUsage()
         if (columnSignature() != shownSignature()) refresh()
     }
 
@@ -512,6 +532,53 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         else -> (userTitleOf(key) ?: key).uppercase()
     }
 
+    /**
+     * 점유율을 다시 계산한다.
+     *
+     * 자동 compact 임박 여부가 "작업을 더 넣을지" 판단에 직접 쓰인다. 임계는
+     * [ContextUsage] 의 값을 그대로 쓰고, HEAVY(80%+) 면 눈에 걸리게 표시를 더한다.
+     *
+     * **세션 ID 는 EDT 에서 모아 배경으로 넘긴다** — 레지스트리·위젯 상태를 배경 스레드에서
+     * 만지지 않기 위해서다. 파일 읽기와 파싱만 배경에서 한다.
+     *
+     * 전사 파일은 지연되어 쓰이므로 값이 실시간보다 조금 늦을 수 있다. 세션 ID 를 아직
+     * 모르는 탭(사용자가 직접 열어 바인딩 전)은 표시하지 않는다.
+     */
+    private fun refreshUsage() {
+        val registry = runCatching { TerminalSessionRegistry.getInstance() }.getOrNull() ?: return
+        val targets = roomColumns.keys.mapNotNull { key ->
+            registry.find(key)?.sessionId?.let { key to it }
+        }
+        val dir = cwd()
+        AppExecutorUtil.getAppExecutorService().execute {
+            var changed = false
+            for ((key, sessionId) in targets) {
+                val file = SessionPaths.sessionFile(dir, sessionId)
+                // 파일이 그대로면 읽지 않는다 — 2초 폴링이라 대화가 멈춘 동안 I/O 가 0 이 된다
+                val stamp = "${file.length()}:${file.lastModified()}"
+                if (usageStamp.put(key, stamp) == stamp) continue
+
+                val (next, level) = runCatching { usageOf(file) }.getOrDefault("" to ContextUsage.Level.OK)
+                usageLevel[key] = level
+                if (usageTip.put(key, next) != next) changed = true
+            }
+            if (changed) ui { refresh() }
+        }
+    }
+
+    /**
+     * @return 헤더 툴팁 문구 + 그 점유 단계.
+     *   숫자는 헤더에 쓰지 않는다 — 탭 이름 옆에 붙이면 좁은 컬럼에서 이름이 잘린다.
+     *   한눈에 필요한 '차오름' 은 색이 알려주고, 정확한 값은 올려보면 나온다.
+     */
+    private fun usageOf(file: File): Pair<String, ContextUsage.Level> {
+        val (tokens, model) = SessionScanner.lastContext(file)
+        if (tokens <= 0) return "" to ContextUsage.Level.OK
+        val pct = ContextUsage.percent(tokens, ContextUsage.contextLimit(model, tokens))
+        val tip = ContextUsage.label(tokens, model) + model.ifEmpty { null }?.let { "  ·  $it" }.orEmpty()
+        return tip to ContextUsage.level(pct)
+    }
+
     /** 그 탭에 사용자가 붙인 이름 (앱이 바꾼 제목은 제외) */
     private fun userTitleOf(key: String): String? = runCatching {
         TerminalSessionRegistry.getInstance().find(key)?.handle?.userTitle()
@@ -527,8 +594,16 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
      * 컬럼 헤더 색. 탭마다 다른 색이라 어느 대화방인지 눈으로 구분된다 —
      * 전부 진행 초록이면 컬럼끼리 안 갈린다. 탭이 아직 없는 칸은 중립 회색.
      */
-    private fun accentOf(key: String): com.intellij.ui.JBColor =
-        if (key == NEW_COLUMN || key == PLACEHOLDER) StatusColors.TODO else RoomColors.of(key)
+    /**
+     * 헤더 색. 평소에는 방 색이지만 **컨텍스트가 차오르면 경고색이 이긴다** —
+     * 그 시점에는 어느 방인지보다 곧 compact 된다는 사실이 중요하다.
+     */
+    private fun accentOf(key: String): com.intellij.ui.JBColor = when {
+        usageLevel[key] == ContextUsage.Level.HEAVY -> StatusColors.CONTEXT_HEAVY
+        usageLevel[key] == ContextUsage.Level.WARN -> StatusColors.CONTEXT_WARN
+        key == NEW_COLUMN || key == PLACEHOLDER -> StatusColors.TODO
+        else -> RoomColors.of(key)
+    }
 
     /**
      * 세울 컬럼들.
@@ -613,8 +688,9 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         }
     }
 
+    /** 링크를 풀어 둔다 — claude 가 전사를 남기는 경로와 같아야 찾을 수 있다 */
     private fun cwd(): String =
-        project.basePath ?: File(System.getProperty("user.home")).absolutePath
+        SessionPaths.canonical(project.basePath ?: File(System.getProperty("user.home")).absolutePath)
 
     /**
      * 실행할 터미널을 팔레트로 고른다. 열린 탭이 없으면 묻지 않고 새 탭으로 진행.
@@ -690,6 +766,9 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         roomColumns.forEach { (key, column) ->
             // 탭 이름이 바뀌었을 수 있다 — 목록보다 먼저 제목을 맞춘다
             column.setTitle(titleOf(key))
+            // 점유가 오르내리면 헤더 색이 따라가고, 정확한 값은 툴팁으로 준다
+            column.setAccent(accentOf(key))
+            column.setHeaderTooltip(usageTip[key]?.ifEmpty { null })
             column.setTasks(all.filter { it.status.isActive && columnKeyOf(it) == key })
         }
         // 끝난 것은 최근이 위 — 방금 뭐가 끝났는지 보려고 보는 컬럼이다.

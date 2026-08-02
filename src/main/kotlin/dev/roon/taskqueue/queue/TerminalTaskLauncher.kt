@@ -454,10 +454,11 @@ class TerminalTaskLauncher(
         if (text.none { it.isWhitespace() || it in "'\"$`\\{}" }) text
         else "'" + text.replace("'", "'\\''") + "'"
 
+    /** 양쪽 다 링크를 풀어 비교한다 — 한쪽만 풀면 같은 프로젝트를 못 알아본다 */
     private fun findProject(cwd: String): Project? {
-        val target = File(cwd).absolutePath
+        val target = SessionPaths.canonical(cwd)
         return ProjectManager.getInstance().openProjects.firstOrNull { p ->
-            p.basePath?.let { File(it).absolutePath } == target
+            p.basePath?.let { SessionPaths.canonical(it) } == target
         }
     }
 

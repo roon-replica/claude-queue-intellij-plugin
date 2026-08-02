@@ -162,14 +162,55 @@ class SessionScannerTest {
 
     @Test
     fun `lastContextTokens 는 최신 assistant usage 를 쓴다`() {
+        assertEquals(60, SessionScanner.lastContextTokens(jsonl(USAGE_60)))
+    }
+
+    @Test
+    fun `lastContextTokens 는 compact 직후에 압축 전 usage 를 쓰지 않는다`() {
         val f = jsonl(
-            """{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":999}}}"""
+            USAGE_60,
+            """{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual"}}"""
+        )
+        assertEquals(0, SessionScanner.lastContextTokens(f))
+    }
+
+    @Test
+    fun `lastContextTokens 는 compact 이후의 새 usage 는 쓴다`() {
+        val f = jsonl(
+            """{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":900000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}""",
+            """{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"auto"}}""",
+            USAGE_60
         )
         assertEquals(60, SessionScanner.lastContextTokens(f))
     }
 
     @Test
+    fun `lastContextTokens 는 isCompactSummary 도 경계로 본다`() {
+        val f = jsonl(USAGE_60, """{"type":"user","isCompactSummary":true,"message":{"content":"요약"}}""")
+        assertEquals(0, SessionScanner.lastContextTokens(f))
+    }
+
+    /** 모델은 압축과 무관하다 — 토큰만 0 이 되고 모델명은 남아야 한다 */
+    @Test
+    fun `lastContext 는 compact 후에도 모델명은 유지한다`() {
+        val snap = SessionScanner.lastContext(
+            jsonl(
+                assistant("end_turn"),
+                """{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"auto"}}"""
+            )
+        )
+        assertEquals(0, snap.tokens)
+        assertEquals("claude-opus-5", snap.model)
+    }
+
+    @Test
     fun `lastModel 은 최신 assistant 모델`() {
         assertEquals("claude-opus-5", SessionScanner.lastModel(jsonl(assistant("end_turn"))))
+    }
+
+    companion object {
+        /** input 10 + 캐시 생성 20 + 캐시 읽기 30 = 60 (output 은 세지 않는다) */
+        private const val USAGE_60 =
+            """{"type":"assistant","message":{"stop_reason":"end_turn","usage":{"input_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":999}}}"""
     }
 }

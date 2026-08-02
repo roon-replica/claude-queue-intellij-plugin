@@ -7,6 +7,7 @@ import com.intellij.openapi.project.ProjectManager
 import com.intellij.ui.SystemNotifications
 import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskStatus
+import dev.roon.taskqueue.session.SessionPaths
 import java.io.File
 
 /** 알림 창구 — 플랫폼 없는 테스트에서 갈아끼운다 */
@@ -87,9 +88,10 @@ object TaskNotifier : TaskNotifications {
 
     /** 알림을 그 작업의 프로젝트 창에 띄운다 — 못 찾으면 앱 수준으로 */
     private fun projectFor(cwd: String): Project? = runCatching {
-        val target = File(cwd).absolutePath
+        // 양쪽 다 링크를 풀어 비교한다 — 한쪽만 풀면 같은 프로젝트를 못 알아본다
+        val target = SessionPaths.canonical(cwd)
         ProjectManager.getInstance().openProjects.firstOrNull { p ->
-            p.basePath?.let { File(it).absolutePath } == target
+            p.basePath?.let { SessionPaths.canonical(it) } == target
         }
     }.getOrNull()
 }

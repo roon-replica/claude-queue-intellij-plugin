@@ -18,6 +18,16 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.6.3</h4>
+        <ul>
+          <li>Each terminal's column now shows how full that conversation's context is. Hover the
+              column title for the exact figure &mdash; <code>598.6k/1m (60%)</code> and the model
+              it's measured against. The title turns amber past 60% and red past 80%, so you can
+              see a conversation filling up before it compacts.</li>
+          <li>Fixed: opening the tool window could fail with an internal error.</li>
+          <li>Fixed: on setups where the project path goes through a symlink, the plugin looked for
+              transcripts in the wrong place &mdash; so answers and context never showed up.</li>
+        </ul>
         <h4>0.6.2</h4>
         <ul>
           <li>Fixed the declared minimum IDE version — 2025.3, which is where the reworked terminal
