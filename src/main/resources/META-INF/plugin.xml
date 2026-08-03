@@ -18,6 +18,11 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.6.4</h4>
+        <ul>
+          <li>Renamed to <b>Claude Task Queue</b> &mdash; the old name was too generic to find.
+              Same plugin, nothing to reinstall.</li>
+        </ul>
         <h4>0.6.3</h4>
         <ul>
           <li>Each terminal's column now shows how full that conversation's context is. Hover the
