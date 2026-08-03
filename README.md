@@ -9,6 +9,8 @@ step in at any time.
 - Completion is detected automatically and the next task starts on its own
 - Each project has its own queue
 - ↻ re-sends an interrupted task to the same conversation
+- **Reopen a recent conversation** — pick one from this project and it resumes in a terminal
+- **Context usage per conversation** — know when to compact or start fresh
 
 ## Requirements
 

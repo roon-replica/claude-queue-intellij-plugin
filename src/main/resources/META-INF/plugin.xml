@@ -12,6 +12,11 @@
           <li>Pick which terminal a task runs in — a new tab, one the plugin opened, or a shell you opened yourself.</li>
           <li>Completion is detected automatically and the next task starts on its own.</li>
           <li>Tasks in different terminal tabs run <b>in parallel</b>; within one tab they run in order.</li>
+          <li><b>Reopen a recent conversation</b> — pick from this project's recent Claude
+              conversations, with the title Claude gave them and when you last used them, and it
+              resumes in the terminal you choose.</li>
+          <li>See <b>how full each conversation's context is</b>, so you know when to compact or
+              start a fresh one.</li>
         </ul>
         Requires the <code>claude</code> CLI on your PATH.
     ]]></description>
