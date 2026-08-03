@@ -54,7 +54,12 @@ class TerminalTaskLauncher(
             try {
                 val registry = registryProvider()
                 // 세션 ID 는 작업이 아니라 탭에 딸린 값 — 같은 탭이면 그 탭의 claude 가 처리한다
-                val known = task.terminalTab.takeIf { it.isNotEmpty() }?.let { registry.find(it) }
+                // **툴윈도우에 실제로 있는지까지 본다** — 등록(`alive`)은 탭을 닫은 직후에도
+                // 살아있다고 답한다. 그걸 믿으면 없는 탭을 기다리다 준비 시간이 다 지난 뒤
+                // "터미널이 시작을 못 끝냈다" 는 엉뚱한 이유로 실패한다.
+                val known = task.terminalTab.takeIf { it.isNotEmpty() }
+                    ?.let { registry.find(it) }
+                    ?.takeIf { TerminalTabFocuser.isOpen(project, it.label) }
 
                 if (task.terminalTab.isNotEmpty() && known == null) {
                     onDone(

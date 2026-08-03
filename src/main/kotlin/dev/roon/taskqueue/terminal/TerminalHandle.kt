@@ -53,6 +53,14 @@ interface TerminalHandle {
      */
     fun userTitle(): String?
 
+    /**
+     * 탭 이름을 바꾼다.
+     *
+     * 이어 연 대화의 이름을 탭에 달아준다 — IDE 를 재시작하면 탭은 복원되지만 어느 탭이
+     * 어느 대화였는지는 우리가 알지 못해, 옛 이름을 단 탭에 다른 대화가 열리면 헷갈린다.
+     */
+    fun setUserTitle(title: String)
+
     /** 이 탭이 그 Content 인지 — 툴윈도에서 탭을 찾아 보여줄 때 쓴다 */
     fun matches(content: Content): Boolean
 }

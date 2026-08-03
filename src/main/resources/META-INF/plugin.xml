@@ -18,6 +18,13 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.6.5</h4>
+        <ul>
+          <li>New <b>Recent conversations</b> button on the toolbar. It lists this project's recent
+              Claude conversations with the title Claude gave them, how full their context is, and
+              when you last used them &mdash; pick one and it resumes in the terminal you choose.
+              If it's already open in a tab, you're taken there instead.</li>
+        </ul>
         <h4>0.6.4</h4>
         <ul>
           <li>Renamed to <b>Claude Task Queue</b> &mdash; the old name was too generic to find.
@@ -151,7 +158,7 @@
           유저가 원하면 설정 → Notifications 에서 풍선을 다시 켤 수 있다.
         -->
         <notificationGroup id="Task Queue" displayType="NONE"/>
-        <toolWindow id="Task Queue"
+        <toolWindow id="Claude Task Queue"
                     anchor="bottom"
                     icon="dev.roon.taskqueue.ui.TaskQueueIcons.ToolWindow"
                     factoryClass="dev.roon.taskqueue.ui.TaskQueueToolWindowFactory"/>

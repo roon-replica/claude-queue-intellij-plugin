@@ -108,10 +108,10 @@ object SessionScanner {
         return ""
     }
 
-    /** 점유율 표시에 필요한 값 한 쌍 */
-    data class ContextSnapshot(val tokens: Long, val model: String) {
+    /** 점유율·목록 표시에 필요한 값 묶음 */
+    data class ContextSnapshot(val tokens: Long, val model: String, val title: String = "") {
         companion object {
-            val NONE = ContextSnapshot(0, "")
+            val NONE = ContextSnapshot(0, "", "")
         }
     }
 
@@ -135,9 +135,16 @@ object SessionScanner {
         var tokens = 0L
         var tokensDone = false
         var model = ""
+        var title = ""
 
         for (i in objs.indices.reversed()) {
             val d = objs[i] ?: continue
+
+            // claude 가 직접 붙인 대화 제목 — 첫 프롬프트를 자르는 것보다 훨씬 낫다
+            if (title.isEmpty() && d.str("type") == "ai-title") {
+                d.str("aiTitle")?.let { title = it }
+                continue
+            }
             if (d.str("type") != "assistant") continue
             val message = d.obj("message")
 
@@ -152,9 +159,9 @@ object SessionScanner {
                     }
                 }
             }
-            if (tokensDone && model.isNotEmpty()) break
+            if (tokensDone && model.isNotEmpty() && title.isNotEmpty()) break
         }
-        return ContextSnapshot(tokens, model)
+        return ContextSnapshot(tokens, model, title)
     }
 
     /** compact 경계 레코드 — 시스템 경계 표식 또는 그 결과로 삽입된 요약 */

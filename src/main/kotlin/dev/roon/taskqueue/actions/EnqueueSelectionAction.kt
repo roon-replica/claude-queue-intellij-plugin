@@ -62,7 +62,7 @@ class EnqueueSelectionAction : AnAction() {
     }
 
     companion object {
-        private const val TOOL_WINDOW = "Task Queue"
+        private const val TOOL_WINDOW = "Claude Task Queue"
         private const val SNIPPET_MAX = 2000
     }
 }

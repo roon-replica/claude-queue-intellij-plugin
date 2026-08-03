@@ -203,6 +203,37 @@ class SessionScannerTest {
         assertEquals("claude-opus-5", snap.model)
     }
 
+    /** claude 가 붙인 제목을 그대로 쓴다 — 첫 프롬프트를 자르는 것보다 정확하다 */
+    @Test
+    fun `lastContext 는 ai-title 을 제목으로 읽는다`() {
+        val snap = SessionScanner.lastContext(
+            jsonl(
+                USAGE_60,
+                """{"type":"ai-title","aiTitle":"알람 트리거 수 계산 로직 확인","sessionId":"x"}"""
+            )
+        )
+        assertEquals("알람 트리거 수 계산 로직 확인", snap.title)
+        assertEquals(60, snap.tokens)
+    }
+
+    /** 제목이 여러 번 갱신되면 마지막 것이 최신이다 */
+    @Test
+    fun `lastContext 는 마지막 ai-title 을 쓴다`() {
+        val snap = SessionScanner.lastContext(
+            jsonl(
+                """{"type":"ai-title","aiTitle":"옛 제목","sessionId":"x"}""",
+                USAGE_60,
+                """{"type":"ai-title","aiTitle":"새 제목","sessionId":"x"}"""
+            )
+        )
+        assertEquals("새 제목", snap.title)
+    }
+
+    @Test
+    fun `lastContext 는 ai-title 이 없으면 빈 제목`() {
+        assertEquals("", SessionScanner.lastContext(jsonl(USAGE_60)).title)
+    }
+
     @Test
     fun `lastModel 은 최신 assistant 모델`() {
         assertEquals("claude-opus-5", SessionScanner.lastModel(jsonl(assistant("end_turn"))))

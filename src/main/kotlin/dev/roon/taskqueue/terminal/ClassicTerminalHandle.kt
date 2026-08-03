@@ -63,6 +63,10 @@ class ClassicTerminalHandle(val widget: JBTerminalWidget) : TerminalHandle {
     override fun userTitle(): String? =
         runCatching { widget.terminalTitle.userDefinedTitle?.takeIf { it.isNotBlank() } }.getOrNull()
 
+    override fun setUserTitle(title: String) {
+        runCatching { widget.terminalTitle.change { userDefinedTitle = title } }
+    }
+
     override fun requestFocus() {
         runCatching { widget.asNewWidget().requestFocus() }
     }

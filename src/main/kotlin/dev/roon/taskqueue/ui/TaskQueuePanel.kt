@@ -29,8 +29,11 @@ import dev.roon.taskqueue.queue.TaskEntry
 import dev.roon.taskqueue.queue.TaskQueueService
 import dev.roon.taskqueue.queue.TaskStatus
 import dev.roon.taskqueue.session.ContextUsage
+import dev.roon.taskqueue.session.RecentSessions
 import dev.roon.taskqueue.session.SessionPaths
 import dev.roon.taskqueue.session.SessionScanner
+import dev.roon.taskqueue.terminal.TabReadiness
+import dev.roon.taskqueue.terminal.TerminalEngines
 import dev.roon.taskqueue.terminal.TerminalSessionRegistry
 import dev.roon.taskqueue.terminal.TerminalTabs
 import dev.roon.taskqueue.terminal.TerminalTabFocuser
@@ -42,6 +45,8 @@ import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.AbstractAction
 import javax.swing.Icon
@@ -235,6 +240,11 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                 AllIcons.Actions.Restart,
                 { selected()?.let { it.status.isFinished || retryable(it) } == true }) {
                 selected()?.let { retryNow(it) }
+            })
+            addSeparator()
+            add(action("Recent conversations", "Reopen a recent Claude conversation in a terminal",
+                AllIcons.Vcs.History, { true }) {
+                showRecentSessions()
             })
             addSeparator()
             add(PauseResumeAction())
@@ -707,7 +717,7 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
                     "Your open terminal tabs can't be used with the Reworked terminal engine.\n\n" +
                         "Switch it in Settings → Tools → Terminal → Terminal engine → Classic,\n" +
                         "then restart the IDE. A new tab will be opened for now.",
-                    "Task Queue",
+                    TITLE,
                 )
             }
             onChosen("")
@@ -833,6 +843,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
 
         const val NEW_TERMINAL = "New terminal"
 
+        /** 대화상자 제목 — 플러그인 표시 이름과 맞춘다 */
+        const val TITLE = "Claude Task Queue"
+
+        /** 탭 이름에 쓸 대화 제목 길이 — 길면 터미널 탭이 화면을 다 먹는다 */
+        const val TAB_TITLE_MAX = 24
+
         /** 히스토리 팔레트에 한 번에 보이는 줄 수 (나머지는 스크롤) */
         const val HISTORY_ROWS = 5
 
@@ -840,6 +856,144 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         const val INPUT_MIN_ROWS = 1
         const val INPUT_MAX_ROWS = 6
     }
+
+    // --- 최근 대화방 ---
+
+    /**
+     * 이 프로젝트에서 최근에 쓴 claude 대화방을 골라 이어서 연다.
+     *
+     * 전사 파일을 읽어야 하므로 **목록 수집은 배경에서** 하고 팝업만 EDT 에서 띄운다.
+     */
+    private fun showRecentSessions() {
+        val dir = cwd()
+        AppExecutorUtil.getAppExecutorService().execute {
+            val items = runCatching { RecentSessions.list(dir) }.getOrDefault(emptyList())
+            ui { showRecentSessionsPopup(items) }
+        }
+    }
+
+    private fun showRecentSessionsPopup(items: List<RecentSessions.Entry>) {
+        if (items.isEmpty()) {
+            Messages.showInfoMessage(project, "No Claude conversations found for this project yet.", TITLE)
+            return
+        }
+        JBPopupFactory.getInstance()
+            .createPopupChooserBuilder(items)
+            .setTitle("Recent conversations")
+            .setVisibleRowCount(RecentSessions.LIMIT)
+            .setRenderer(object : SimpleListCellRenderer<RecentSessions.Entry>() {
+                override fun customize(
+                    list: JList<out RecentSessions.Entry>,
+                    value: RecentSessions.Entry,
+                    index: Int,
+                    selected: Boolean,
+                    hasFocus: Boolean,
+                ) {
+                    text = "${value.displayTitle()}   ${percentOf(value)}   ${dateOf(value)}"
+                    toolTipText = value.usageLabel().ifEmpty { null }
+                }
+            })
+            .setItemChosenCallback { chosen -> chooseTerminal { tab -> resumeSession(chosen, tab) } }
+            .createPopup()
+            .showInCenterOf(this)
+    }
+
+    /** 토큰을 모르면 빈칸 — 0% 로 오해되면 안 된다 */
+    private fun percentOf(entry: RecentSessions.Entry): String =
+        entry.percent?.let { "$it%" } ?: ""
+
+    private fun dateOf(entry: RecentSessions.Entry): String =
+        SimpleDateFormat("MM/dd HH:mm").format(Date(entry.lastUsedAt))
+
+    /**
+     * 고른 대화방을 터미널에서 이어 연다.
+     *
+     * **이미 떠 있는 세션이면 그 탭으로 보내기만 한다** — 같은 세션에 `--resume` 을
+     * 두 번 걸면 claude 가 거부하거나 대화가 갈라진다.
+     */
+    private fun resumeSession(entry: RecentSessions.Entry, tab: String) {
+        val registry = TerminalSessionRegistry.getInstance()
+        // 이 대화가 **정말 지금 돌고 있을 때만** 이동으로 끝낸다. 조건이 셋이다:
+        //  - 탭이 툴윈도우에 실제로 열려 있고 (`alive` 는 탭을 닫은 직후에도 살아있다고 답한다)
+        //  - 그 안에서 claude 가 돌고 있어야 한다 (`exit` 로 빠져나오면 셸만 남는데,
+        //    레지스트리에는 세션 ID 가 그대로 물려 있어 열려 있는 것처럼 보인다)
+        // 하나라도 아니면 아래로 내려가 다시 이어 연다 — 무반응으로 끝나는 것이 최악이다.
+        registry.aliveTabs().firstOrNull { it.sessionId == entry.sessionId }?.let { open ->
+            val openInTab = TerminalTabFocuser.isOpen(project, open.label)
+            if (openInTab && open.claudeRunning() == true) {
+                TerminalTabFocuser.focus(project, open.label, moveFocus = true)
+                return
+            }
+            if (!openInTab) registry.unregister(open.label)
+        }
+
+        val target = tab.ifEmpty {
+            val label = registry.uniqueLabel(entry.displayTitle().take(20).ifEmpty { "claude" })
+            val handle = TerminalEngines.createTab(project, cwd(), label)
+            if (handle == null) {
+                Messages.showWarningDialog(project, "Could not open a terminal tab.", TITLE)
+                return
+            }
+            registry.register(label, handle, entry.sessionId, ours = false)
+            // 탭이 보여야 세션이 시작된다 — 포커스는 옮기지 않는다
+            TerminalTabFocuser.focus(project, label, moveFocus = false)
+            label
+        }
+
+        val tab = registry.find(target) ?: run {
+            Messages.showWarningDialog(project, "That terminal tab is gone.", TITLE)
+            return
+        }
+        val exe = ClaudeCli.getInstance().findExecutable()
+        if (exe == null) {
+            Messages.showWarningDialog(project, "claude CLI not found on your PATH.", TITLE)
+            return
+        }
+
+        // **명령을 보내기 전에 탭을 앞으로 가져온다.** claude 는 전체화면 TUI 라서 시작할 때
+        // 터미널 행·열 수를 읽는다. 가려진 탭에서 시작하면 잘못된 크기로 그려놓고 리사이즈가
+        // 올 때까지 그대로 있어 화면이 반만 채워진다. 사용자가 직접 고른 동작이므로
+        // 포커스까지 옮긴다 — 자동 실행과 달리 여기서는 그게 기대되는 결과다.
+        TerminalTabFocuser.focus(project, target, moveFocus = true)
+
+        // **tty 가 붙기 전에 보내면 명령이 유실된다** — 방금 만든 탭이 특히 그렇다
+        TabReadiness.await(
+            project, tab,
+            onTimeout = { Messages.showWarningDialog(project, "The terminal did not finish starting up.", TITLE) },
+        ) {
+            when {
+                // 이미 claude 가 도는 탭에 명령을 치면 셸이 아니라 대화창에 글자로 들어간다
+                tab.claudeRunning() == true -> Messages.showWarningDialog(
+                    project,
+                    "Claude is already running in that terminal. Pick another one, or exit it first.",
+                    TITLE,
+                )
+
+                tab.hasRunningCommand() == true -> Messages.showWarningDialog(
+                    project,
+                    "That tab is busy running something else. Pick another terminal.",
+                    TITLE,
+                )
+
+                else -> {
+                    // 세션 ID 를 탭에 물려둔다 — 점유율 표시가 따라온다
+                    registry.bindSession(target, entry.sessionId)
+                    // **탭 이름을 그 대화 이름으로 맞춘다.** IDE 를 재시작하면 탭은 복원되지만
+                    // 어느 탭이 어느 대화였는지는 알 수 없어, 옛 이름을 단 탭에 다른 대화를
+                    // 열면 제목과 내용이 어긋나 헷갈린다.
+                    tab.handle.setUserTitle(entry.displayTitle().take(TAB_TITLE_MAX))
+                    tab.runCommand("${shellQuote(exe.absolutePath)} --resume ${entry.sessionId}")
+                        .onFailure {
+                            Messages.showWarningDialog(project, "Could not start claude: ${it.message}", TITLE)
+                        }
+                }
+            }
+        }
+    }
+
+    private fun shellQuote(text: String): String =
+        if (text.none { it.isWhitespace() || it in "'\"$`\\{}" }) text
+        else "'" + text.replace("'", "'\\''") + "'"
 
     /** 조건부 활성 액션을 짧게 만드는 헬퍼 */
     private fun action(

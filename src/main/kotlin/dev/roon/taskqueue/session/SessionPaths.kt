@@ -37,6 +37,17 @@ object SessionPaths {
         projectDir(cwd).listFiles { f -> f.isFile && f.name.endsWith(".jsonl") }?.toList() ?: emptyList()
 
     /**
+     * 최근에 쓴 세션 파일 [limit] 개.
+     *
+     * **mtime 으로 먼저 추린 뒤 내용을 읽는다** — mtime 은 파일을 열지 않고 얻으므로
+     * 수십 개가 있어도 공짜다. 내용 읽기는 추려낸 것에만 든다.
+     */
+    fun recentSessionFiles(cwd: String, limit: Int): List<File> =
+        listSessionFiles(cwd)
+            .sortedByDescending { it.lastModified() }
+            .take(limit)
+
+    /**
      * [since] 이후에 갱신된 가장 최근 세션 파일.
      * 대화형 실행은 우리가 준 세션 ID 를 그대로 쓰지 않을 수 있어, ID 를 가정하지 않고 찾아낸다.
      */

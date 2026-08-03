@@ -70,6 +70,10 @@ class ReworkedTerminalHandle(private val tab: TerminalToolWindowTab) : TerminalH
     override fun userTitle(): String? =
         runCatching { view.title.userDefinedTitle?.takeIf { it.isNotBlank() } }.getOrNull()
 
+    override fun setUserTitle(title: String) {
+        runCatching { view.title.change { userDefinedTitle = title } }
+    }
+
     override fun requestFocus() {
         runCatching { view.preferredFocusableComponent.requestFocusInWindow() }
     }
