@@ -65,7 +65,9 @@ intellijPlatform {
 
     pluginConfiguration {
         id = "dev.roon.taskqueue"
-        name = "Task Queue"
+        // 마켓플레이스 표시 이름. ID 는 정체성이라 절대 바꾸지 않는다 —
+        // 바꾸면 기존 사용자가 업데이트를 못 받는다
+        name = "Claude Task Queue"
         version = providers.gradleProperty("pluginVersion")
         vendor {
             name = "roon"

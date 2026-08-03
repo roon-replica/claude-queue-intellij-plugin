@@ -1,4 +1,4 @@
-# Task Queue
+# Claude Task Queue
 
 Queue up [Claude Code](https://claude.com/claude-code) tasks and let them run in your IntelliJ
 terminal while you keep working. Tasks run in a real Claude Code terminal, so you can watch and
