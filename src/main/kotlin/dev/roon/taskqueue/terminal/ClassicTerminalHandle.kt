@@ -30,10 +30,20 @@ class ClassicTerminalHandle(val widget: JBTerminalWidget) : TerminalHandle {
             widget.ttyConnector?.isConnected ?: true
         }.getOrDefault(false)
 
-    /** 쓰기용이라 신 API 어댑터를 그때그때 만들어도 된다 */
+    /**
+     * 쓰기용이라 신 API 어댑터를 그때그때 만들어도 된다.
+     *
+     * **본문과 Enter 를 따로 보낸다** — 한 덩어리로 보내면 큰 입력이 붙여넣기로 취급되어
+     * 끝의 `\r` 이 실행이 아니라 줄바꿈이 되고, 입력만 들어간 채 실행되지 않는다([SubmitDelay]).
+     */
     override fun write(text: String): Result<Unit> = runCatching {
+        writeRaw(CLEAR_INPUT + text)
+        SubmitDelay.submitAfter(text) { writeRaw(it) }
+    }
+
+    private fun writeRaw(text: String) {
         widget.asNewWidget().ttyConnectorAccessor.executeWithTtyConnector { connector ->
-            connector.write(CLEAR_INPUT + text + "\r")
+            connector.write(text)
         }
     }
 

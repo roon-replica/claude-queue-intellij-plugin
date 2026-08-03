@@ -30,14 +30,17 @@ class ReworkedTerminalHandle(private val tab: TerminalToolWindowTab) : TerminalH
             .getOrDefault(false)
 
     /**
-     * 입력창에 한 줄 넣고 실행한다.
+     * 입력창을 비우고 한 줄 넣은 뒤 실행한다. **세 번을 따로 보낸다.**
      *
-     * 비우기(Ctrl-U)를 **따로 보낸다** — `shouldExecute()` 는 뒤에 개행을 붙이므로
-     * 한 번에 합치면 비우기와 본문 사이가 아니라 끝에 개행이 붙어 순서가 어긋난다.
+     * 비우기(Ctrl-U)를 합치면 순서가 어긋나고, 실행(Enter)을 합치면 큰 입력에서
+     * 실행이 되지 않는다 — 각각의 이유는 [SubmitDelay] 에 적어뒀다.
      */
     override fun write(text: String): Result<Unit> = runCatching {
         view.sendText(CLEAR_INPUT)
-        view.createSendTextBuilder().shouldExecute().send(text)
+        // **실행을 붙이지 않고 본문만 보낸다** — 한 덩어리로 보내면 큰 입력이 붙여넣기로
+        // 취급되어 끝의 개행이 실행이 아니라 줄바꿈이 되고, 입력만 들어간 채 멈춘다.
+        view.sendText(text)
+        SubmitDelay.submitAfter(text) { view.sendText(it) }
     }
 
     override fun runCommand(command: String): Result<Unit> = runCatching {

@@ -21,4 +21,12 @@ enum class SessionState {
     ;
 
     val isTerminal: Boolean get() = this == DONE || this == IDLE
+
+    /**
+     * 지금 프롬프트를 보내면 안 되는 상태.
+     *
+     * WORKING 에 보내면 두 요청이 겹치고, 그 턴이 끝나며 오는 완료 신호를 우리 작업의
+     * 완료로 오판한다. WAITING 에 보내면 우리 프롬프트가 그 질문의 답이 된다.
+     */
+    val isBusy: Boolean get() = this == WORKING || this == WAITING
 }

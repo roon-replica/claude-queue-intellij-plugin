@@ -84,12 +84,14 @@ class TerminalTaskLauncher(
                     val sentAt = System.currentTimeMillis()
                     when {
                         // 우리 탭 재사용 — 심어둔 훅이 이 턴의 완료를 알린다
-                        tab.ours ->
-                            runOnOurTab(tab, task, hooks, sentAt, running, onLine, onState, onDone)
+                        tab.ours -> awaitSessionIdle(tab, task, running, onLine, onDone) {
+                            runOnOurTab(tab, task, hooks, System.currentTimeMillis(), running, onLine, onState, onDone)
+                        }
 
                         // claude 가 확실히 도는 탭 — 프롬프트를 그 입력창에 넣는다
-                        tab.claudeRunning() == true ->
-                            runOnExternalTab(tab, task, sentAt, running, onLine, onState, onDone)
+                        tab.claudeRunning() == true -> awaitSessionIdle(tab, task, running, onLine, onDone) {
+                            runOnExternalTab(tab, task, System.currentTimeMillis(), running, onLine, onState, onDone)
+                        }
 
                         // claude 는 아닌데 뭔가 돌고 있다 — 남의 작업 위에 프롬프트를 쏘면 안 된다
                         tab.hasRunningCommand() == true -> onDone(
@@ -167,6 +169,65 @@ class TerminalTaskLauncher(
             }, 0, READY_POLL_MS, TimeUnit.MILLISECONDS)
         )
     }
+
+    /**
+     * 그 대화가 **지금 답하는 중이면 끝나기를 기다린다.**
+     *
+     * `claudeRunning()` 은 "claude 가 떠 있나" 만 답한다 — "지금 답변 중인가" 는 모른다.
+     * 답변 중에 프롬프트를 밀어넣으면 두 가지가 겹쳐 망가진다. 그 턴이 끝나면서 오는
+     * Stop 훅(또는 전사의 완료 기록)을 **우리 작업의 완료로 오판해** 다음 작업이
+     * 바로 시작된다(실측). 사람이 직접 쓰던 대화에 작업을 보낼 때 특히 그렇다.
+     *
+     * 세션 ID 를 아는 탭만 판정할 수 있다 — 모르는 탭(직접 연 첫 전송)은 그대로 진행한다.
+     * WAITING(질문 대기)도 기다린다. 그 상태에 보내면 우리 프롬프트가 질문의 답이 된다.
+     */
+    private fun awaitSessionIdle(
+        tab: TerminalSessionRegistry.Tab,
+        task: TaskEntry,
+        running: TerminalRun,
+        onLine: (String) -> Unit,
+        onDone: (TaskResult) -> Unit,
+        proceed: () -> Unit,
+    ) {
+        val sessionId = tab.sessionId
+        if (sessionId == null) {
+            proceed()
+            return
+        }
+        val file = SessionPaths.sessionFile(task.cwd, sessionId)
+        if (!isBusy(file)) {
+            proceed()
+            return
+        }
+
+        onLine("· that conversation is still answering — waiting for it to finish…")
+        val startedAt = System.currentTimeMillis()
+        running.attachBusyWait(
+            AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay({
+                if (running.canceled) return@scheduleWithFixedDelay
+                when {
+                    !isBusy(file) -> {
+                        running.stopBusyWait()
+                        ApplicationManager.getApplication().invokeLater {
+                            if (!running.canceled) proceed()
+                        }
+                    }
+
+                    System.currentTimeMillis() - startedAt > BUSY_TIMEOUT_MS -> {
+                        running.stopBusyWait()
+                        onDone(
+                            TaskResult(
+                                -1, SessionState.UNKNOWN, null,
+                                "That conversation has been busy too long — send it again when it's free",
+                            )
+                        )
+                    }
+                }
+            }, BUSY_POLL_MS, BUSY_POLL_MS, TimeUnit.MILLISECONDS)
+        )
+    }
+
+    private fun isBusy(file: File): Boolean = SessionScanner.sessionState(file).isBusy
 
     // --- 실행 경로 ---
 
@@ -260,6 +321,8 @@ class TerminalTaskLauncher(
         task.sessionId = sessionId
         task.hookSessionId = sessionId
 
+        // 앞 턴이 남긴 신호를 먼저 버린다 — 그게 남아 있으면 보내는 순간 완료로 오판된다
+        hooks.discardPending(sessionId)
         awaitHookStop(hooks, sessionId, sentAt, running, onLine, onState, onDone)
         sendPrompt(tab, task, onLine)
         onState(SessionState.WORKING)
@@ -506,6 +569,20 @@ class TerminalTaskLauncher(
             readyWait = null
         }
 
+        /** 남의 턴이 끝나기를 기다리는 폴링 — 준비 대기와 다른 슬롯이어야 한다(이어서 돈다) */
+        @Volatile
+        private var busyWait: ScheduledFuture<*>? = null
+
+        fun attachBusyWait(future: ScheduledFuture<*>) {
+            busyWait = future
+            if (canceled) future.cancel(false)
+        }
+
+        fun stopBusyWait() {
+            busyWait?.cancel(false)
+            busyWait = null
+        }
+
         @Volatile
         private var watch: SessionWatcher.Handle? = null
 
@@ -559,6 +636,7 @@ class TerminalTaskLauncher(
             registration?.cancel()
             discovery?.cancel(false)
             readyWait?.cancel(false)
+            busyWait?.cancel(false)
             stopWatch()
             stopTimeout()
         }
@@ -579,6 +657,13 @@ class TerminalTaskLauncher(
         const val IDLE_STREAK_TO_FAIL = 3
 
         /** 탭 준비 대기 — 셸이 뜨고 rc 파일을 읽는 시간 */
+        /**
+         * 사람이 쓰던 턴이 끝나기를 기다리는 폴링.
+         * 그 턴이 길 수 있어 넉넉히 두지만, 무한정 기다려 큐가 멈추면 안 된다.
+         */
+        const val BUSY_POLL_MS = 1_000L
+        const val BUSY_TIMEOUT_MS = 10 * 60_000L
+
         const val READY_POLL_MS = 200L
         const val READY_TIMEOUT_MS = 20_000L
         const val SHELL_SETTLE_MS = 600L

@@ -45,6 +45,21 @@ class StopHookWatcher : Disposable {
         fun cancel()
     }
 
+    /**
+     * 그 세션에 **이미 쌓여 있는 Stop 신호를 버린다.** 프롬프트를 보내기 전에 부른다.
+     *
+     * 훅 파일명은 세션 ID 로 고정이라 턴마다 같은 경로를 쓴다. 사람이 그 터미널에서 쓰던
+     * 턴이 끝나면 대기자가 없어도 파일이 남는데, 곧바로 작업을 보내면 [awaitStop] 의
+     * `since` 시각 비교가 시계 오차 허용치(2초) 안에 걸려 **그 신호를 우리 완료로 오판한다**.
+     * 답변이 끝나기를 기다렸다 보내는 경로에서 특히 잘 맞는다(실측).
+     *
+     * 대기자가 없는 신호는 어차피 아무도 쓰지 않으므로 버려도 잃는 것이 없다.
+     */
+    fun discardPending(sessionId: String) {
+        val file = File(stopsDir, fileName(sessionId))
+        if (file.isFile) file.delete()
+    }
+
     data class StopSignal(
     val sessionId: String,
     val transcriptPath: String?,
@@ -67,9 +82,12 @@ class StopHookWatcher : Disposable {
      */
     fun hookCommand(sessionId: String): String {
         stopsDir.mkdirs()
-        val target = File(stopsDir, "stop${sessionId.replace("-", "")}.json").absolutePath
+        val target = File(stopsDir, fileName(sessionId)).absolutePath
         return "cat > ${shellQuote(target)}"
     }
+
+    /** 세션 ID 로 고정된 신호 파일명 — [hookCommand] 와 [discardPending] 이 같이 쓴다 */
+    internal fun fileName(sessionId: String): String = "stop${sessionId.replace("-", "")}.json"
 
     /** 대기자가 있을 때만 폴링한다 — 유휴 상태에서 헛도는 비용을 없앤다 */
     private fun ensurePolling() {

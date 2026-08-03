@@ -18,6 +18,14 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.6.6</h4>
+        <ul>
+          <li>Sending a task to a conversation that's still answering no longer collides with it.
+              The queue waits for that turn to finish, then sends &mdash; before, the task could be
+              marked done the moment the earlier answer ended, and the next one started too early.</li>
+          <li>Long prompts are submitted properly. A large paste ended up sitting in Claude's input
+              box without running, because the Enter arrived as part of the pasted text.</li>
+        </ul>
         <h4>0.6.5</h4>
         <ul>
           <li>New <b>Recent conversations</b> button on the toolbar. It lists this project's recent
