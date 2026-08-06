@@ -23,7 +23,7 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
-        <h4>0.6.8</h4>
+        <h4>0.6.9</h4>
         <ul>
           <li>New <b>Quick Run</b> shortcut &mdash; <code>Cmd+Shift+;</code> on macOS,
               <code>Ctrl+Alt+R</code> elsewhere. Type a task, pick which terminal runs it, done.
