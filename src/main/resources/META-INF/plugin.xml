@@ -25,7 +25,7 @@
     <change-notes><![CDATA[
         <h4>0.6.8</h4>
         <ul>
-          <li>New <b>Quick Run</b> shortcut &mdash; <code>Ctrl+Q</code> on macOS,
+          <li>New <b>Quick Run</b> shortcut &mdash; <code>Cmd+Shift+;</code> on macOS,
               <code>Ctrl+Alt+R</code> elsewhere. Type a task, pick which terminal runs it, done.
               It works from anywhere in the IDE, so you no longer have to open the tool window and
               drag a card onto a terminal's column just to run something in that tab. Pick
@@ -221,13 +221,16 @@
             <!-- 단축키를 모르는 사람이 찾을 수 있어야 한다 -->
             <add-to-group group-id="ToolsMenu" anchor="last"/>
             <!--
-              맥은 Ctrl+Q — 두 키, Q=Queue. 맥 키맵의 Quick Documentation 은 Ctrl+J/F1 이라
-              겹치지 않는다. (Cmd+Shift+Q 는 macOS 로그아웃이라 절대 쓰면 안 된다)
-              그 외 키맵에서 Ctrl+Q 는 Quick Documentation 이므로 Ctrl+Alt+R 로 둔다.
+              맥은 Cmd+Shift+세미콜론. 번들 키맵을 실제로 계산해서 고른 값이다 —
+              맥 키맵은 `$default` 를 상속하고 플랫폼이 control→meta 로 치환하므로,
+              맥 키맵 파일만 봐서는 비어 보여도 실제로는 잡혀 있는 조합이 많다
+              (Cmd+Shift+Enter=Complete Statement, Cmd+Shift+J=Join Lines, Cmd+Alt+Q 등).
+              Cmd+Shift+Q 는 IDEA 에선 비어 있지만 **macOS 로그아웃**이라 쓰면 안 된다.
+              그 외 키맵은 Ctrl+Alt+R — Ctrl+Q 가 Quick Documentation 이라 피한다.
             -->
             <keyboard-shortcut keymap="$default" first-keystroke="control alt R"/>
-            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="control Q" replace-all="true"/>
-            <keyboard-shortcut keymap="Mac OS X" first-keystroke="control Q" replace-all="true"/>
+            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta shift SEMICOLON" replace-all="true"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift SEMICOLON" replace-all="true"/>
         </action>
     </actions>
 </idea-plugin>
