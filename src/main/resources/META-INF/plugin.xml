@@ -23,6 +23,13 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.6.7</h4>
+        <ul>
+          <li>Select text in the terminal, right-click, and <b>Add to Task Queue</b> puts it straight
+              into the task box. Handy when Claude suggests what to do next &mdash; grab the line and
+              queue it instead of retyping. On the classic terminal engine the menu item isn't
+              available, but the shortcut still works.</li>
+        </ul>
         <h4>0.6.6</h4>
         <ul>
           <li>Sending a task to a conversation that's still answering no longer collides with it.
@@ -190,6 +197,12 @@
                 description="Queue the selection or file as an automated task">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+            <!--
+              신(Reworked) 터미널의 우클릭 메뉴. claude 가 뿌린 "다음 할 일" 을 긁어
+              그대로 큐에 넣기 위한 것이다. 그룹은 2025.3 부터 있다(sinceBuild=253 이라 안전).
+              Classic 은 팝업을 JediTerm 이 직접 만들어 끼워넣을 자리가 없다 — 단축키로만 된다.
+            -->
+            <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
             <keyboard-shortcut keymap="$default" first-keystroke="control alt shift Q"/>
         </action>
     </actions>
