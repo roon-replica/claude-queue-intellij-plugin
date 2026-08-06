@@ -39,7 +39,6 @@ import dev.roon.taskqueue.terminal.TerminalTabs
 import dev.roon.taskqueue.terminal.TerminalTabFocuser
 import java.awt.BorderLayout
 import java.awt.GridLayout
-import java.awt.MouseInfo
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
@@ -706,46 +705,12 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
      * 실행할 터미널을 팔레트로 고른다. 열린 탭이 없으면 묻지 않고 새 탭으로 진행.
      * @param onChosen 선택된 탭 이름 ("" = 새 탭)
      */
-    private fun chooseTerminal(anchor: RelativePoint? = null, onChosen: (String) -> Unit) {
-        val tabs = TerminalTabs.list(project)
-        if (tabs.isEmpty()) {
-            // 탭이 있는데 하나도 못 쓰는 상황과 아예 없는 상황은 다르다 —
-            // 조용히 새 탭을 열면 왜 내 터미널이 무시됐는지 알 길이 없다
-            if (TerminalTabs.hasUnusableTabs(project)) {
-                Messages.showWarningDialog(
-                    project,
-                    "Your open terminal tabs can't be used with the Reworked terminal engine.\n\n" +
-                        "Switch it in Settings → Tools → Terminal → Terminal engine → Classic,\n" +
-                        "then restart the IDE. A new tab will be opened for now.",
-                    TITLE,
-                )
-            }
-            onChosen("")
-            return
-        }
-
-        val items = listOf(NEW_TERMINAL) + tabs.map { it.display }
-        val popup = JBPopupFactory.getInstance()
-            .createPopupChooserBuilder(items)
-            .setTitle("Run in terminal")
-            .setMovable(false)
-            .setResizable(false)
-            .setItemChosenCallback { chosen ->
-                // 고른 탭을 레지스트리에 고정한다 — 제목이 바뀌어도 위젯 참조로 찾는다
-                val tab = tabs.firstOrNull { it.display == chosen }?.let(TerminalTabs::pin) ?: ""
-                onChosen(tab)
-            }
-            .createPopup()
-
-        // 누른 자리에 띄운다 — showInBestPositionFor 는 패널 기준으로 잡아 엉뚱한 데 뜬다
-        val at = anchor ?: cursorPoint()
-        if (at != null) popup.show(at) else popup.showInFocusCenter()
-    }
+    private fun chooseTerminal(anchor: RelativePoint? = null, onChosen: (String) -> Unit) =
+        // 목록·경고는 [TerminalPalette] 한 곳에만 둔다 — 빠른 실행과 두 벌로 갈리면 한쪽만 고쳐진다
+        TerminalPalette.choose(project, anchor = anchor, onChosen = onChosen)
 
     /** 마우스가 있는 곳 — 드래그·툴바 조작 모두 커서 근처가 자연스럽다 */
-    private fun cursorPoint(): RelativePoint? = runCatching {
-        MouseInfo.getPointerInfo()?.location?.let { RelativePoint.fromScreen(it) }
-    }.getOrNull()
+    private fun cursorPoint(): RelativePoint? = TerminalPalette.cursorPoint()
 
     private fun togglePause() {
         if (queue.autoAdvance) queue.pause() else queue.start()
@@ -841,7 +806,6 @@ class TaskQueuePanel(private val project: Project) : JPanel(BorderLayout()), Dis
         /** 한 번 숨쉬는 데 걸리는 시간 */
         const val PULSE_PERIOD_MS = 2_000f
 
-        const val NEW_TERMINAL = "New terminal"
 
         /** 대화상자 제목 — 플러그인 표시 이름과 맞춘다 */
         const val TITLE = "Claude Task Queue"

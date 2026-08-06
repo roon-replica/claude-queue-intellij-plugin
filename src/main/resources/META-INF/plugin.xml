@@ -23,6 +23,15 @@
 
     <!-- 마켓플레이스 'What's New' 에 그대로 노출된다 -->
     <change-notes><![CDATA[
+        <h4>0.6.8</h4>
+        <ul>
+          <li>New <b>Quick Run</b> shortcut &mdash; <code>Ctrl+Q</code> on macOS,
+              <code>Ctrl+Alt+R</code> elsewhere. Type a task, pick which terminal runs it, done.
+              It works from anywhere in the IDE, so you no longer have to open the tool window and
+              drag a card onto a terminal's column just to run something in that tab. Pick
+              "TODO" instead if you only want to jot it down. The terminal you used last is
+              pre-selected. Also on the Tools menu.</li>
+        </ul>
         <h4>0.6.7</h4>
         <ul>
           <li>Select text in the terminal, right-click, and <b>Add to Task Queue</b> puts it straight
@@ -204,6 +213,21 @@
             -->
             <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
             <keyboard-shortcut keymap="$default" first-keystroke="control alt shift Q"/>
+        </action>
+        <action id="TaskQueue.QuickRun"
+                class="dev.roon.taskqueue.actions.QuickRunAction"
+                text="Quick Run Claude Task…"
+                description="Type a task and send it straight to a terminal tab">
+            <!-- 단축키를 모르는 사람이 찾을 수 있어야 한다 -->
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <!--
+              맥은 Ctrl+Q — 두 키, Q=Queue. 맥 키맵의 Quick Documentation 은 Ctrl+J/F1 이라
+              겹치지 않는다. (Cmd+Shift+Q 는 macOS 로그아웃이라 절대 쓰면 안 된다)
+              그 외 키맵에서 Ctrl+Q 는 Quick Documentation 이므로 Ctrl+Alt+R 로 둔다.
+            -->
+            <keyboard-shortcut keymap="$default" first-keystroke="control alt R"/>
+            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="control Q" replace-all="true"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="control Q" replace-all="true"/>
         </action>
     </actions>
 </idea-plugin>
